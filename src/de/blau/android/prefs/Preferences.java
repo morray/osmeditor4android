@@ -3,6 +3,7 @@ package de.blau.android.prefs;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -14,7 +15,7 @@ import android.util.Log;
 import de.blau.android.R;
 import de.blau.android.osm.Server;
 import de.blau.android.presets.Preset;
-import de.blau.android.resources.Profile;
+import de.blau.android.resources.DataStyle;
 
 /**
  * Convenience class for parsing and holding the application's SharedPreferences.
@@ -41,6 +42,8 @@ public class Preferences {
 	
 	private final boolean largeDragArea;
 	
+	private final boolean tagFormEnabled;
+	
 	private final String backgroundLayer;
 	
 	private final String overlayLayer;
@@ -48,6 +51,10 @@ public class Preferences {
 	private final String scaleLayer;
 	
 	private final String mapProfile;
+	
+	private final String followGPSbutton;
+	
+	private final String fullscreenMode;
 	
 	private int gpsInterval;
 	
@@ -94,7 +101,19 @@ public class Preferences {
 	
 	private final boolean showWayIcons;
 	
+	private int maxInlineValues;
+	
+	private int maxTileDownloadThreads;
+	
+	private int notificationCacheSize;
+	
+	private int autoLockDelay;
+	
 	private final static String DEFAULT_MAP_PROFILE = "Color Round Nodes";
+	
+	private final SharedPreferences prefs;
+	
+	private final Resources r;
 	
 	/**
 	 * @param prefs
@@ -104,8 +123,8 @@ public class Preferences {
 	 */
 	@SuppressLint("NewApi")
 	public Preferences(Context ctx) throws IllegalArgumentException, NotFoundException {
-		final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(ctx);
-		final Resources r = ctx.getResources();
+		prefs = PreferenceManager.getDefaultSharedPreferences(ctx);
+		r = ctx.getResources();
 		advancedPrefs = new AdvancedPrefDatabase(ctx);
 		
 		// we're not using acra.disable - ensure it isn't present
@@ -166,6 +185,7 @@ public class Preferences {
 		isAntiAliasingEnabled = prefs.getBoolean(r.getString(R.string.config_enableAntiAliasing_key), true);
 		isOpenStreetBugsEnabled = prefs.getBoolean(r.getString(R.string.config_enableOpenStreetBugs_key), false);
 		isPhotoLayerEnabled = prefs.getBoolean(r.getString(R.string.config_enablePhotoLayer_key), false);
+		tagFormEnabled = prefs.getBoolean(r.getString(R.string.config_tagFormEnabled_key), true);
 		isKeepScreenOnEnabled = prefs.getBoolean(r.getString(R.string.config_enableKeepScreenOn_key), false);
 		useBackForUndo = prefs.getBoolean(r.getString(R.string.config_use_back_for_undo_key), false);
 		largeDragArea = prefs.getBoolean(r.getString(R.string.config_largeDragArea_key), false);
@@ -178,10 +198,10 @@ public class Preferences {
 		scaleLayer = prefs.getString(r.getString(R.string.config_scale_key), "SCALE_METRIC");
 		String tempMapProfile = prefs.getString(r.getString(R.string.config_mapProfile_key), null);
 		// check if we actually still have the profile
-		if (Profile.getProfile(tempMapProfile) == null) {
-			if (Profile.getProfile(DEFAULT_MAP_PROFILE) == null) {
+		if (DataStyle.getStyle(tempMapProfile) == null) {
+			if (DataStyle.getStyle(DEFAULT_MAP_PROFILE) == null) {
 				Log.w(getClass().getName(), "Using builtin default profile instead of " + tempMapProfile + " and " + DEFAULT_MAP_PROFILE);
-				mapProfile = Profile.getBuiltinProfileName(); // built-in fall back
+				mapProfile = DataStyle.getBuiltinStyleName(); // built-in fall back
 			}
 			else {
 				Log.w(getClass().getName(), "Using default profile");
@@ -210,8 +230,8 @@ public class Preferences {
 			Log.w(getClass().getName(), "error parsing config_maxAlertDistance_key");
 			maxAlertDistance = 100;
 		}
-		// light theme doesn't really work prior to Honeycomb, but make it the default for anything newer
-		lightThemeEnabled = prefs.getBoolean(r.getString(R.string.config_enableLightTheme_key), Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB ? true : false);
+		// light theme now always default
+		lightThemeEnabled = prefs.getBoolean(r.getString(R.string.config_enableLightTheme_key), true);
 		
 		addressTags = new HashSet<String>(Arrays.asList(r.getStringArray(R.array.address_tags_defaults)));
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
@@ -223,6 +243,38 @@ public class Preferences {
 		leaveGpsDisabled = prefs.getBoolean(r.getString(R.string.config_leaveGpsDisabled_key), false);
 
 		showWayIcons = prefs.getBoolean(r.getString(R.string.config_showWayIcons_key), true);
+		
+		followGPSbutton = prefs.getString(r.getString(R.string.config_followGPSbutton_key), "LEFT");
+		
+		fullscreenMode = prefs.getString(r.getString(R.string.config_fullscreenMode_key), Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT ? r.getString(R.string.full_screen_auto) : r.getString(R.string.full_screen_never));
+	
+		try {
+			maxInlineValues = Integer.parseInt(prefs.getString(r.getString(R.string.config_maxInlineValues_key), "4"));
+		} catch (NumberFormatException e) {
+			Log.w(getClass().getName(), "error parsing config_maxInlineValues_key=" + prefs.getString(r.getString(R.string.config_maxInlineValues_key), "4"));
+			maxInlineValues = 4;
+		}
+		
+		try {
+			maxTileDownloadThreads = Integer.parseInt(prefs.getString(r.getString(R.string.config_maxTileDownloadThreads_key), "2"));
+		} catch (NumberFormatException e) {
+			Log.w(getClass().getName(), "error parsing config_maxTileDownloadThreads_key=" + prefs.getString(r.getString(R.string.config_maxTileDownloadThreads_key), "2"));
+			maxTileDownloadThreads = 2;
+		}
+		
+		try {
+			notificationCacheSize = Integer.parseInt(prefs.getString(r.getString(R.string.config_notificationCacheSize_key), "5"));
+		} catch (NumberFormatException e) {
+			Log.w(getClass().getName(), "error parsing config_notificationCacheSize_key=" + prefs.getString(r.getString(R.string.config_notificationCacheSize_key), "5"));
+			notificationCacheSize = 5;
+		}
+		
+		try {
+			autoLockDelay = Integer.parseInt(prefs.getString(r.getString(R.string.config_autoLockDelay_key), "60"));
+		} catch (NumberFormatException e) {
+			Log.w(getClass().getName(), "error parsing config_autoLockDelay_key=" + prefs.getString(r.getString(R.string.config_autoLockDelay_key), "60"));
+			autoLockDelay = 60;
+		}
 	}
 	
 	/**
@@ -272,6 +324,13 @@ public class Preferences {
 	 */
 	public boolean isPhotoLayerEnabled() {
 		return isPhotoLayerEnabled;
+	}
+	
+	/**
+	 * @return
+	 */
+	public boolean tagFormEnabled() {
+		return tagFormEnabled;
 	}
 	
 	/**
@@ -452,5 +511,68 @@ public class Preferences {
 
 	public boolean leaveGpsDisabled() {
 		return leaveGpsDisabled;
+	}
+	
+	public String followGPSbuttonPosition() {
+		return followGPSbutton;
+	}
+	
+	public String getFullscreenMode() {
+		return fullscreenMode;
+	}
+	
+	public int getMaxInlineValues() {
+		return maxInlineValues;
+	}
+	
+	public int getMaxTileDownloadThreads() {
+		return maxTileDownloadThreads;
+	}
+
+	public int getNotificationCacheSize() {
+		return notificationCacheSize;
+	}
+
+	public int getAutolockDelay() {
+		return 1000*autoLockDelay;
+	}
+	
+	public void setAutoDownload(boolean on) {
+		prefs.edit().putBoolean(r.getString(R.string.config_autoDownload_key), on).commit();
+	}
+	
+	public boolean getAutoDownload() {
+		String key = r.getString(R.string.config_autoDownload_key);
+		if (!prefs.contains(key)) {
+			// create the entry
+			setAutoDownload(false);
+		}
+		return prefs.getBoolean(key, false);
+	}
+	
+	public void setBugAutoDownload(boolean on) {
+		prefs.edit().putBoolean(r.getString(R.string.config_bugAutoDownload_key), on).commit();
+	}
+	
+	public boolean getBugAutoDownload() {
+		String key = r.getString(R.string.config_bugAutoDownload_key);
+		if (!prefs.contains(key)) {
+			// create the entry
+			setBugAutoDownload(false);
+		}
+		return prefs.getBoolean(key, false);
+	}
+	
+	public void setShowGPS(boolean on) {
+		prefs.edit().putBoolean(r.getString(R.string.config_showGPS_key), on).commit();
+	}
+	
+	public boolean getShowGPS() {
+		String key = r.getString(R.string.config_showGPS_key);
+		if (!prefs.contains(key)) {
+			// create the entry
+			setShowGPS(true);
+		}
+		return prefs.getBoolean(key, true);
 	}
 }

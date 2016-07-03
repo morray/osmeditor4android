@@ -8,19 +8,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.content.Context;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils.TruncateAt;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
 import android.widget.AdapterView.OnItemSelectedListener;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
@@ -31,23 +34,17 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
-
-import com.actionbarsherlock.app.SherlockFragment;
-import com.actionbarsherlock.app.SherlockFragmentActivity;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuInflater;
-import com.actionbarsherlock.view.MenuItem;
-
 import de.blau.android.Application;
 import de.blau.android.HelpViewer;
-import de.blau.android.Main;
 import de.blau.android.R;
 import de.blau.android.osm.Relation;
 import de.blau.android.osm.StorageDelegator;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetItem;
+import de.blau.android.util.BaseFragment;
+import de.blau.android.util.StringWithDescription;
 
-public class RelationMembershipFragment extends SherlockFragment implements
+public class RelationMembershipFragment extends BaseFragment implements
 		PropertyRows,
 		OnItemSelectedListener {
 	
@@ -56,8 +53,11 @@ public class RelationMembershipFragment extends SherlockFragment implements
 	private LayoutInflater inflater = null;
 
 	private HashMap<Long, String> savedParents = null;
+
+	private EditorUpdate tagListener = null;
 	
 	static SelectedRowsActionModeCallback parentSelectedActionModeCallback = null;
+	static Object actionModeCallbackLock = new Object();
 	
 	/**
      */
@@ -74,15 +74,15 @@ public class RelationMembershipFragment extends SherlockFragment implements
     }
     
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
-        Log.d(DEBUG_TAG, "onAttach");
-//        try {
-//            mListener = (OnPresetSelectedListener) activity;
-//        } catch (ClassCastException e) {
-//            throw new ClassCastException(activity.toString() + " must implement OnPresetSelectedListener");
-//        }
-
+    public void onAttachToContext(Context context) {
+        Log.d(DEBUG_TAG, "onAttachToContext");
+        try {
+        	tagListener = (EditorUpdate) context;
+        } catch (ClassCastException e) {
+        	throw new ClassCastException(context.toString() + " must implement OnPresetSelectedListener");
+        }
+        setHasOptionsMenu(true);
+        getActivity().supportInvalidateOptionsMenu();
     }
 
     @Override
@@ -101,7 +101,7 @@ public class RelationMembershipFragment extends SherlockFragment implements
 
     	// Inflate the layout for this fragment
     	this.inflater = inflater;
-    	parentRelationsLayout = (ScrollView) inflater.inflate(R.layout.membership_view,null);
+    	parentRelationsLayout = (ScrollView) inflater.inflate(R.layout.membership_view, container, false);
 		membershipVerticalLayout = (LinearLayout) parentRelationsLayout.findViewById(R.id.membership_vertical_layout);
 		// membershipVerticalLayout.setSaveFromParentEnabled(false);
 		membershipVerticalLayout.setSaveEnabled(false);
@@ -153,7 +153,7 @@ public class RelationMembershipFragment extends SherlockFragment implements
 				Relation r = (Relation) storageDelegator.getOsmElement(Relation.NAME, id.longValue());
 				insertNewMembership(membershipVerticalLayout, parents.get(id),r,0, false);
 			}
-		}
+		} 
 	}
     
     @Override
@@ -193,7 +193,7 @@ public class RelationMembershipFragment extends SherlockFragment implements
 	 * @return the new RelationMembershipRow
 	 */
 	protected RelationMembershipRow insertNewMembership(LinearLayout membershipVerticalLayout, final String role, final Relation r, final int position, boolean showSpinner) {
-		RelationMembershipRow row = (RelationMembershipRow) inflater.inflate(R.layout.relation_membership_row, null);
+		RelationMembershipRow row = (RelationMembershipRow) inflater.inflate(R.layout.relation_membership_row, membershipVerticalLayout, false);
 
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) { // stop Hint from wrapping
 			row.roleEdit.setEllipsize(TruncateAt.END);
@@ -212,7 +212,7 @@ public class RelationMembershipFragment extends SherlockFragment implements
 				if (isChecked) {
 					parentSelected();
 				} else {
-					deselectRows();
+					deselectRow();
 				}
 			}
 		});
@@ -221,7 +221,7 @@ public class RelationMembershipFragment extends SherlockFragment implements
 	}
 	
 	/**
-	 * A row representing a parent relation with an edits for role and further values and a delete button.
+	 * A row representing a parent relation with an edit for role and further values and a delete button.
 	 */
 	public static class RelationMembershipRow extends LinearLayout implements
 			SelectedRowsActionModeCallback.Row {
@@ -231,7 +231,6 @@ public class RelationMembershipFragment extends SherlockFragment implements
 		private CheckBox selected;
 		private AutoCompleteTextView roleEdit;
 		private Spinner parentEdit;
-		private ArrayAdapter<String> roleAdapter; 
 		public boolean showSpinner = false;
 		
 		public RelationMembershipRow(Context context) {
@@ -285,32 +284,46 @@ public class RelationMembershipFragment extends SherlockFragment implements
 			};
 			
 			roleEdit.setOnClickListener(autocompleteOnClick);
+			
+			roleEdit.setOnItemClickListener(new OnItemClickListener() {
+				@Override
+				public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+					Log.d(DEBUG_TAG,"onItemClicked value");
+					Object o = parent.getItemAtPosition(position);			
+					if (o instanceof StringWithDescription) {
+						roleEdit.setText(((StringWithDescription)o).getValue());
+					} else if (o instanceof String) {
+						roleEdit.setText((String)o);
+					}
+				}
+			});
 		}
 		
-		protected ArrayAdapter<String> getMembershipRoleAutocompleteAdapter() {
+		protected ArrayAdapter<StringWithDescription> getMembershipRoleAutocompleteAdapter() {
 			// Use a set to prevent duplicate keys appearing
-			Set<String> roles = new HashSet<String>();
+			Set<StringWithDescription> roles = new HashSet<StringWithDescription>();
 			Relation r = (Relation) Application.getDelegator().getOsmElement(Relation.NAME, relationId);
 			if ( r!= null) {			
 				if ( owner.presets != null) {
 					PresetItem relationPreset = Preset.findBestMatch(owner.presets,r.getTags());
 					if (relationPreset != null) {
-						roles.addAll(relationPreset.getRoles());
+						List<StringWithDescription> presetRoles = relationPreset.getRoles();
+						if (presetRoles != null) {
+							roles.addAll(presetRoles);
+						}
 					}
 				}
 			}
 			
-			List<String> result = new ArrayList<String>(roles);
+			List<StringWithDescription> result = new ArrayList<StringWithDescription>(roles);
 			Collections.sort(result);
-			roleAdapter = new ArrayAdapter<String>(owner, R.layout.autocomplete_row, result);
 			
-			return roleAdapter;
+			return new ArrayAdapter<StringWithDescription>(owner, R.layout.autocomplete_row, result);
 		}
 		
 		protected ArrayAdapter<Relation> getRelationSpinnerAdapter() {
-			//
-			
-			List<Relation> result = Application.getDelegator().getCurrentStorage().getRelations();;
+			//		
+			List<Relation> result = Application.getDelegator().getCurrentStorage().getRelations();
 			// Collections.sort(result);
 			return new ArrayAdapter<Relation>(owner, R.layout.autocomplete_row, result);
 		}
@@ -402,23 +415,26 @@ public class RelationMembershipFragment extends SherlockFragment implements
 			selected.setEnabled(true);
 		}
 	} // RelationMembershipRow
-	    
-	
-	protected synchronized void parentSelected() {
-		LinearLayout rowLayout = (LinearLayout) getOurView();
-		if (parentSelectedActionModeCallback == null) {
-			parentSelectedActionModeCallback = new SelectedRowsActionModeCallback(this, rowLayout);
-			((SherlockFragmentActivity)getActivity()).startActionMode(parentSelectedActionModeCallback);
-		}	
+	    	
+	protected void parentSelected() {
+		synchronized (actionModeCallbackLock) {
+			LinearLayout rowLayout = (LinearLayout) getOurView();
+			if (parentSelectedActionModeCallback == null) {
+				parentSelectedActionModeCallback = new SelectedRowsActionModeCallback(this, rowLayout);
+				((AppCompatActivity)getActivity()).startSupportActionMode(parentSelectedActionModeCallback);
+			}	
+		}
 	}
 	
 	@Override
-	public synchronized void deselectRows() {
-		if (parentSelectedActionModeCallback != null) {
-			if (parentSelectedActionModeCallback.rowsDeselected(true)) {
-				parentSelectedActionModeCallback = null;
-			}
-		}	
+	public void deselectRow() {
+		synchronized (actionModeCallbackLock) {
+			if (parentSelectedActionModeCallback != null) {
+				if (parentSelectedActionModeCallback.rowsDeselected(true)) {
+					parentSelectedActionModeCallback = null;
+				}
+			}	
+		}
 	}
 	
 	protected void selectAllParents() {
@@ -446,26 +462,6 @@ public class RelationMembershipFragment extends SherlockFragment implements
 	}
 	
 	/**
-	 * Get possible roles from the preset
-	 * @return
-	 */
-	protected ArrayAdapter<String> getMemberRoleAutocompleteAdapter() {
-		// Use a set to prevent duplicate keys appearing
-		Set<String> roles = new HashSet<String>();
-				
-		if (((PropertyEditor)getActivity()).presets != null && ((PropertyEditor)getActivity()).tagEditorFragment.autocompletePresetItem != null) {
-			PresetItem relationPreset = Preset.findBestMatch(((PropertyEditor)getActivity()).presets,((PropertyEditor)getActivity()).tagEditorFragment.getKeyValueMapSingle(false)); // FIXME
-			if (relationPreset != null) {
-				roles.addAll(((PropertyEditor)getActivity()).tagEditorFragment.autocompletePresetItem.getRoles());
-			}
-		}
-
-		List<String> result = new ArrayList<String>(roles);
-		Collections.sort(result);
-		return new ArrayAdapter<String>(getActivity(), R.layout.autocomplete_row, result);
-	}
-	
-	/**
 	 */
 	private interface ParentRelationHandler {
 		abstract void handleParentRelation(final EditText roleEdit, final long relationId);
@@ -477,6 +473,10 @@ public class RelationMembershipFragment extends SherlockFragment implements
 	 */
 	private void processParentRelations(final ParentRelationHandler handler) {
 		LinearLayout membershipVerticalLayout = (LinearLayout) getOurView();
+		if (membershipVerticalLayout == null) {
+			Log.e(DEBUG_TAG,"unable to process parent relations");
+			return;
+		}
 		final int size = membershipVerticalLayout.getChildCount();
 		for (int i = 0; i < size; ++i) { 
 			View view = membershipVerticalLayout.getChildAt(i);
@@ -563,7 +563,7 @@ public class RelationMembershipFragment extends SherlockFragment implements
 	/**
 	 * reload original arguments
 	 */
-	private void doRevert() {
+	void doRevert() {
 		loadParents((HashMap<Long,String>) getArguments().getSerializable("parents"));
 	}
 	

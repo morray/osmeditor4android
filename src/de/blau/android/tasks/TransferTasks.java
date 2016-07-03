@@ -1,41 +1,27 @@
 package de.blau.android.tasks;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
-import com.actionbarsherlock.app.SherlockActivity;
-
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.util.Log;
 import android.widget.Toast;
 import de.blau.android.Application;
-import de.blau.android.DialogFactory;
-import de.blau.android.Logic;
+import de.blau.android.ErrorCodes;
 import de.blau.android.PostAsyncActionHandler;
 import de.blau.android.R;
+import de.blau.android.dialogs.ErrorAlert;
+import de.blau.android.dialogs.Progress;
 import de.blau.android.exception.OsmException;
 import de.blau.android.osm.BoundingBox;
-import de.blau.android.osm.OsmElement;
-import de.blau.android.osm.PostMergeHandler;
 import de.blau.android.osm.Server;
-import de.blau.android.osm.Track;
-import de.blau.android.osm.Track.TrackPoint;
 import de.blau.android.prefs.Preferences;
 import de.blau.android.util.IssueAlert;
-import de.blau.android.util.SavingHelper;
-import de.blau.android.util.Util;
-import de.blau.android.views.overlay.OpenStreetMapViewOverlay;
 
 public class TransferTasks {
 
@@ -115,64 +101,97 @@ public class TransferTasks {
 	}	
 	
 	/**
-	 * Upload Notes or bugs to server, needs to be called from main for now (mainly to OAuth dependency)
+	 * Upload Notes or bugs to server, needs to be called from main for now (mainly for OAuth dependency)
 	 * @param context
 	 * @param server
 	 */
 	static public void upload(final Context context, final Server server) {
-		boolean uploadFailed = false ;
+		final String PROGRESS_TAG = "tasks";
+
 		if (server != null) {
-			Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity,true);
-			ArrayList<Task>queryResult = Application.getTaskStorage().getTasks();
+			final ArrayList<Task>queryResult = Application.getTaskStorage().getTasks();
+			// check if we need to oAuth first
 			for (Task b:queryResult) {
-				if (b.changed) {
-					try {
-						Thread.sleep(100); // attempt at workaround of Osmose issues
-					} catch (InterruptedException e) {
-					}
-					if (b instanceof Note) {
-						if (server.isLoginSet()) {
-							if (server.needOAuthHandshake()) {
-								Application.mainActivity.oAuthHandshake(server, new PostAsyncActionHandler() {
-									@Override
-									public void execute() {
-										Preferences prefs = new Preferences(context);
-										upload(context, prefs.getServer());
-									}
-								});
-								if (server.getOAuth()) // if still set
-									Toast.makeText(context, R.string.toast_oauth, Toast.LENGTH_LONG).show();
-								return;
-							} 
-						} else {
-							Application.mainActivity.showDialog(DialogFactory.NO_LOGIN_DATA);
+				if (b.changed && b instanceof Note) {
+					if (server.isLoginSet()) {
+						if (server.needOAuthHandshake()) {
+							Application.mainActivity.oAuthHandshake(server, new PostAsyncActionHandler() {
+								@Override
+								public void execute() {
+									Preferences prefs = new Preferences(context);
+									upload(context, prefs.getServer());
+								}
+							});
+							if (server.getOAuth()) // if still set
+								Toast.makeText(context, R.string.toast_oauth, Toast.LENGTH_LONG).show();
 							return;
-						}
-						Note n = (Note)b;
-						NoteComment nc = n.getLastComment();
-						if (nc != null && nc.isNew()) {
-							uploadFailed = !uploadNote(context, server, n, nc.getText(), n.isClosed(), true) || uploadFailed;
-						} else {
-							uploadFailed = !uploadNote(context, server, n, null, n.isClosed(), true) || uploadFailed; // just a state change
-						}
-					} else if (b instanceof OsmoseBug) {
-						uploadFailed =  uploadOsmoseBug((OsmoseBug)b) || uploadFailed;
+						} 
+					} else {
+						ErrorAlert.showDialog(Application.mainActivity,ErrorCodes.NO_LOGIN_DATA);
+						return;
 					}
 				}
 			}
-			Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity,false);
-			Toast.makeText(context, !uploadFailed ? R.string.openstreetbug_commit_ok : R.string.openstreetbug_commit_fail, Toast.LENGTH_SHORT).show();
-		}
+			new AsyncTask<Void, Void, Boolean>() {
+				@Override
+				protected void onPreExecute() {
+					Progress.showDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING, PROGRESS_TAG);
+					Log.d(DEBUG_TAG,"starting up load of total " + queryResult.size() + " tasks");
+				}
+
+				@Override
+				protected Boolean doInBackground(Void... params) {
+					boolean uploadFailed = false;
+					for (Task b:queryResult) {
+						if (b.changed) {
+							try {
+								Thread.sleep(100); // attempt at workaround of Osmose issues
+							} catch (InterruptedException e) {}
+							Log.d(DEBUG_TAG, b.getDescription());
+							if (b instanceof Note) {
+								Note n = (Note)b;
+								NoteComment nc = n.getLastComment();
+								if (nc != null && nc.isNew()) {
+									uploadFailed = !uploadNote(context, server, n, nc.getText(), n.isClosed(), true) || uploadFailed;
+								} else {
+									uploadFailed = !uploadNote(context, server, n, null, n.isClosed(), true) || uploadFailed; // just a state change
+								}
+							} else if (b instanceof OsmoseBug) {
+								uploadFailed =  uploadOsmoseBug((OsmoseBug)b) || uploadFailed;
+							}
+						}
+					}
+					return uploadFailed;
+				}
+				
+				@Override
+				protected void onPostExecute(Boolean uploadFailed) {
+					Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING, PROGRESS_TAG);
+					Toast.makeText(Application.mainActivity.getApplicationContext(), !uploadFailed ? R.string.openstreetbug_commit_ok : R.string.openstreetbug_commit_fail, Toast.LENGTH_SHORT).show();
+				}
+			}.execute();
+		};
 	}
 	
+	/**
+	 * Upload single bug state
+	 * @param b
+	 * @return
+	 */
+	@SuppressLint("InlinedApi")
 	static public boolean uploadOsmoseBug(final OsmoseBug b) {
+		Log.d(DEBUG_TAG, "uploadOsmoseBug");
 		AsyncTask<Void, Void, Boolean> a = new AsyncTask<Void, Void, Boolean>() {
 			@Override
 			protected Boolean doInBackground(Void... params) {			
 				return OsmoseServer.changeState((OsmoseBug)b);
 			}
 		};
-		a.execute();
+	    if(Build.VERSION.SDK_INT >= 11) {
+	        a.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+	    } else {
+	        a.execute();
+	    }
 		try {
 			return a.get();
 		} catch (InterruptedException e) {
@@ -209,7 +228,7 @@ public class TransferTasks {
 					return false;
 				} 
 			} else {
-				Application.mainActivity.showDialog(DialogFactory.NO_LOGIN_DATA);
+				ErrorAlert.showDialog(Application.mainActivity,ErrorCodes.NO_LOGIN_DATA);
 				return false;
 			}
 
@@ -220,8 +239,11 @@ public class TransferTasks {
 
 				@Override
 				protected void onPreExecute() {
+					Log.d(DEBUG_TAG,"onPreExecute");
 					newBug = bug.isNew();
-					Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity, true);
+					if (!quiet) {
+						Progress.showDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING);
+					}
 				}
 
 				@Override
@@ -229,7 +251,7 @@ public class TransferTasks {
 					// execute() is called below with no arguments (args will be empty)
 					// getDisplayName() is deferred to here in case a lengthy OSM query
 					// is required to determine the nickname
-
+					Log.d(DEBUG_TAG,"doInBackground " + server.getBaseURL());
 					return super.doInBackground(server);
 				}
 
@@ -241,15 +263,20 @@ public class TransferTasks {
 					if (result) {
 						// upload sucessful
 						bug.changed = false;
-					}
-					Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity, false);
+					}	
 					if (!quiet) {
+						Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING);
 						Toast.makeText(context, result ? R.string.openstreetbug_commit_ok : R.string.openstreetbug_commit_fail, Toast.LENGTH_SHORT).show();
 					}
 				}
 			};
 
-			ct.execute();
+			// FIXME seems as if AsyncTask tends to run out of threads here .... not clear if executeOnExecutor actually helps
+		    if(Build.VERSION.SDK_INT >= 11) {
+		        ct.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+		    } else {
+		        ct.execute();
+		    }
 			try {
 				return ct.get();
 			} catch (InterruptedException e) {

@@ -6,7 +6,6 @@ import java.util.ArrayList;
 
 import org.xmlpull.v1.XmlSerializer;
 
-import android.graphics.Rect;
 import android.util.Log;
 import de.blau.android.Application;
 import de.blau.android.exception.OsmException;
@@ -128,8 +127,8 @@ public class BoundingBox implements Serializable, JosmXmlSerializable, BoundedOb
 	}
 	
 	/**
-	 * Creates a degenerated BoundingBox with the corners set to the node coords
-	 * validate will cause and exception if called on this
+	 * Creates a degenerated BoundingBox with the corners set to the node coordinates
+	 * validate will cause an exception if called on this
 	 */
 	public BoundingBox(int lonE7, int latE7) {
 		left = lonE7;
@@ -326,10 +325,11 @@ public class BoundingBox implements Serializable, JosmXmlSerializable, BoundedOb
 	}
 	
 	public boolean intersects(final BoundingBox b) {
-		// this is naturally only true on the plain, probably should use mercator coordinates
-		//Log.d("BoundingBox","intersects " + left + "/" + bottom  + "/"  + right + "/" + top + "  " + b.left + "/" + b.bottom  + "/"  + b.right + "/" + b.top);
-		return (Math.abs(left + width/2 - b.left - b.width/2) * 2 < (width + b.width)) &&
-		         (Math.abs(bottom + (long)height/2 - b.bottom - (long)b.height/2) * 2 < ((long)height + (long)b.height));
+		if (right < b.left) return false; // a is left of b
+		if (left > b.right) return false; // a is right of b
+		if (top < b.bottom) return false; // a is above b
+		if (bottom > b.top) return false; // a is below b
+		return true; // boxes overlap
 	}
 	
 	/**
@@ -576,7 +576,7 @@ public class BoundingBox implements Serializable, JosmXmlSerializable, BoundedOb
 		long mTop = GeoMath.latE7ToMercatorE7(top);
 		long mBottom = GeoMath.latE7ToMercatorE7(bottom);
 		long mHeight = mTop - mBottom; 
-		return -Math.min((MAX_ZOOM_WIDTH - width) / 2f / width, ((2l*(long)GeoMath.MAX_MLAT_E7) - mHeight) / 2f /mHeight);
+		return -Math.min((MAX_ZOOM_WIDTH - width) / 2f / width, ((2L*(long)GeoMath.MAX_MLAT_E7) - mHeight) / 2f /mHeight);
 	}
 	
 	/**
@@ -709,16 +709,37 @@ public class BoundingBox implements Serializable, JosmXmlSerializable, BoundedOb
 	}
 
 	/**
-	 * Sets the borders to the ones of newBox. Recalculates dimensions and
-	 * mercator-factor.
+	 * Sets the borders to the ones of newBox. Recalculates dimensions to fit the current ratio (that of the window) 
+	 * and maintains zoom level
 	 * 
 	 * @param newBox box with the new borders.
 	 */
 	public void setBorders(final BoundingBox newBox) {
-		setBorders(newBox, ratio);
+		setBorders(newBox, this.ratio);
 	}
 	
+	/**
+	 * Sets the borders to the ones of newBox. Recalculates dimensions to fit the ratio and maintains zoom level
+	 * 
+	 * @param newBox
+	 * @param ratio
+	 */
 	public void setBorders(final BoundingBox newBox, float ratio) {
+		setBorders(newBox, ratio, true);
+	}
+	
+	/**
+	 * Sets the borders to the ones of newBox. Recalculates dimensions to fit the current ratio (that of the window) 
+	 * and maintains zoom level depending on the value of preserveZoom
+	 * 
+	 * @param newBox
+	 * @param preserveZoom
+	 */
+	public void setBorders(final BoundingBox newBox, boolean preserveZoom) {
+		setBorders(newBox, this.ratio, preserveZoom);
+	}
+	
+	public void setBorders(final BoundingBox newBox, float ratio, boolean preserveZoom) {
 		left = newBox.left;
 		right = newBox.right;
 		top = newBox.top;
@@ -726,7 +747,7 @@ public class BoundingBox implements Serializable, JosmXmlSerializable, BoundedOb
 		Log.d("BoundingBox","setBorders " + newBox.toString() + " ratio is " + ratio);
 		try {
 			calcDimensions(); // neede to recalc width
-			setRatio(ratio, true);
+			setRatio(ratio, preserveZoom);
 			validate();
 		} catch (Exception e) {
 			// TODO Auto-generated catch block
@@ -760,6 +781,17 @@ public class BoundingBox implements Serializable, JosmXmlSerializable, BoundedOb
 
 	public boolean contains(BoundingBox bb) {
 		return (bb.bottom >= bottom) && (bb.top <= top) && (bb.left >= left) && (bb.right <= right);
+	}
+	
+	/**
+	 * Returns true if the coordinates are in the box
+	 * Right and top coordinate are considered inside
+	 * @param lonE7
+	 * @param latE7
+	 * @return
+	 */
+	public boolean contains(int lonE7, int latE7) {
+		return left <= lonE7 && lonE7 <= right && bottom <= latE7 && latE7 <= top;
 	}
 
 	/**
@@ -927,16 +959,5 @@ public class BoundingBox implements Serializable, JosmXmlSerializable, BoundedOb
 	 */
 	public boolean isEmpty() {
 		return left == right && top == bottom;
-	}
-
-	/**
-	 * Returns true if the coordinates are in the box
-	 * Right and top coordinate are considered outside
-	 * @param lonE7
-	 * @param latE7
-	 * @return
-	 */
-	public boolean contains(int lonE7, int latE7) {
-		return left <= lonE7 && lonE7 < right && bottom <= latE7 && latE7 < top;
 	}
 }

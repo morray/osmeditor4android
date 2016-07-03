@@ -9,19 +9,14 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.ObjectInputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.zip.GZIPInputStream;
-
-import javax.xml.parsers.ParserConfigurationException;
 
 import org.acra.ACRA;
-import org.xml.sax.SAXException;
 
 import android.app.PendingIntent;
 import android.app.Service;
@@ -39,6 +34,7 @@ import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -46,28 +42,21 @@ import android.os.Looper;
 import android.os.Message;
 import android.support.v4.app.NotificationCompat;
 import android.util.Log;
-import android.view.View;
 import android.widget.Toast;
 import de.blau.android.Application;
-import de.blau.android.DialogFactory;
-import de.blau.android.Logic;
 import de.blau.android.Main;
 import de.blau.android.R;
+import de.blau.android.dialogs.Progress;
 import de.blau.android.exception.OsmException;
-import de.blau.android.exception.StorageException;
 import de.blau.android.osm.BoundingBox;
-import de.blau.android.osm.OsmParser;
 import de.blau.android.osm.StorageDelegator;
 import de.blau.android.osm.Track;
-import de.blau.android.osm.UndoStorage;
 import de.blau.android.osm.Track.TrackPoint;
 import de.blau.android.prefs.Preferences;
-import de.blau.android.resources.Profile;
 import de.blau.android.tasks.TransferTasks;
 import de.blau.android.util.GeoMath;
 import de.blau.android.util.SavingHelper;
 import de.blau.android.util.SavingHelper.Exportable;
-import de.blau.android.util.SavingHelper.LoadThread;
 
 public class TrackerService extends Service implements LocationListener, NmeaListener, Exportable {
 
@@ -209,7 +198,9 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 		track.markNewSegment();
 		try {
 			Application.mainActivity.triggerMenuInvalidation();
-		} catch (Exception e) {} // ignore
+		} catch (Exception e) {
+			Log.e(TAG,"startTrackingInternal triggerMenuInvalidation failed " + e);
+		} 
 		updateGPSState();
 	}
 	
@@ -224,7 +215,9 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 		downloading = true;
 		try {
 			Application.mainActivity.triggerMenuInvalidation();
-		} catch (Exception e) {} // ignore
+		} catch (Exception e) {
+			Log.e(TAG,"startAutoDownloadInternal triggerMenuInvalidation failed " + e);
+		} 	
 		updateGPSState();
 	}
 	
@@ -239,7 +232,9 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 		downloadingBugs = true;
 		try {
 			Application.mainActivity.triggerMenuInvalidation();
-		} catch (Exception e) {} // ignore
+		} catch (Exception e) {
+			Log.e(TAG,"startBugAutoDownloadInternal triggerMenuInvalidation failed " + e);
+		} 
 		updateGPSState();
 	}
 	
@@ -353,7 +348,7 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 		if (source != GpsSource.INTERNAL && location.getProvider().equals("gps")) {
 			return; // ignore updates from internal gps
 		}
-		Log.d(TAG,"onLocationChanged " + location.getProvider());
+		// Log.d(TAG,"onLocationChanged " + location.getProvider());
 		if (!location.hasAccuracy() || location.getAccuracy() <= TRACK_LOCATION_MIN_ACCURACY) {
 			if (tracking) {
 				track.addTrackPoint(location);
@@ -376,7 +371,11 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 	public void onProviderDisabled(String provider) {
 		Log.d(TAG, "Provider disabled: " + provider);
 		gpsEnabled = false;
-		locationManager.removeUpdates(this);
+		try {
+			locationManager.removeUpdates(this);
+		} catch (SecurityException sex) {
+			// can be safely ignored
+		}
 		locationManager.removeNmeaListener(this);
 		if (tcpClient != null) {
 			tcpClient.cancel();
@@ -401,7 +400,9 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 			Preferences prefs = new Preferences(this);
 			try {
 				Location last = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-				if (last != null) onLocationChanged(last);
+				if (last != null) {
+					onLocationChanged(last);
+				}
 			} catch (Exception e) {} // Ignore
 			try {
 				// used to pass updates to UI thread
@@ -449,7 +450,11 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 			gpsEnabled = true;
 		} else if (!needed && gpsEnabled) {
 			Log.d(TAG, "Disabling GPS updates");
-			locationManager.removeUpdates(this);
+			try {
+				locationManager.removeUpdates(this);
+			} catch (SecurityException sex) {
+				// can be safely ignored
+			}
 			gpsEnabled = false;
 		}
 	}
@@ -488,7 +493,7 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 			
 			@Override
 			protected void onPreExecute() {
-				Application.mainActivity.showDialog(DialogFactory.PROGRESS_LOADING);
+				Progress.showDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 			}
 			
 			@Override
@@ -507,14 +512,14 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 			@Override
 			protected void onPostExecute(Integer result) {
 				try {
-					Application.mainActivity.dismissDialog(DialogFactory.PROGRESS_LOADING);
+					Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 					Toast.makeText(Application.mainActivity.getApplicationContext(), 
 							Application.mainActivity.getApplicationContext().getResources().getString(R.string.toast_imported_track_points,track.getTrackPoints().size()-existingPoints), Toast.LENGTH_LONG).show();
 					// the following is extremely ugly
 					Main.triggerMenuInvalidationStatic();
-				} catch (IllegalArgumentException e) {
-					 // Avoid crash if dialog is already dismissed
-					Log.d("TrackerService", "", e);
+				} catch (IllegalStateException e) {
+					 // Avoid crash if activity is paused
+					Log.e(TAG, "onPostExecute", e);
 				}
 			}
 			
@@ -551,146 +556,154 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 	 */
 	private void processNmeaSentance(String sentence) {
 		boolean posUpdate = false;
-		if (sentence.length() > 9) { // everything shorter is invalid
-			int star = sentence.indexOf('*');
-			if (star > 5) {
-				String withoutChecksum = sentence.substring(1, star);
-				int receivedChecksum = Integer.parseInt(sentence.substring(star+1,star+3),16);
-				int checksum = 0;
-				for (byte b:withoutChecksum.getBytes()) {
-					checksum = checksum ^ b;
-				}
-				if (receivedChecksum == checksum) {
-					String talker = withoutChecksum.substring(0,2);
-					String s = withoutChecksum.substring(2,5);
-					
-					double lat = Double.NaN;
-					double lon = Double.NaN;
-					double hdop = Double.NaN;
-					double height = Double.NaN;
-					double course = Double.NaN;
-					double speed = Double.NaN;
-						
-					if (s.equals("GNS")) {
-						String[] values = withoutChecksum.split(",",-12); // java magic
-						if (values.length==13) {
-							try {
-								if ((!values[6].toUpperCase(Locale.US).startsWith("NN") || !values[6].toUpperCase(Locale.US).equals("N")) && Integer.parseInt(values[7]) >= 4) { // at least one "good" system needs a fix
-									lat = nmeaLatToDecimal(values[2])*(values[3].toUpperCase(Locale.US).equals("N")?1:-1);
-									lon = nmeaLonToDecimal(values[4])*(values[5].toUpperCase(Locale.US).equals("E")?1:-1);
-									hdop = Double.parseDouble(values[8]);
-									height = Double.parseDouble(values[9]);
-									posUpdate = true;
+		try {
+			if (sentence.length() > 9) { // everything shorter is invalid
+				int star = sentence.indexOf('*');
+				if (star > 5 && sentence.length() >= star + 3 ) {
+					String withoutChecksum = sentence.substring(1, star);
+					int receivedChecksum = Integer.parseInt(sentence.substring(star+1,star+3),16);
+					int checksum = 0;
+					for (byte b:withoutChecksum.getBytes()) {
+						checksum = checksum ^ b;
+					}
+					if (receivedChecksum == checksum) {
+						String talker = withoutChecksum.substring(0,2);
+						String s = withoutChecksum.substring(2,5);
+
+						double lat = Double.NaN;
+						double lon = Double.NaN;
+						double hdop = Double.NaN;
+						double height = Double.NaN;
+						double course = Double.NaN;
+						double speed = Double.NaN;
+
+						if (s.equals("GNS")) {
+							String[] values = withoutChecksum.split(",",-12); // java magic
+							if (values.length==13) {
+								try {
+									if ((!values[6].toUpperCase(Locale.US).startsWith("NN") || !values[6].toUpperCase(Locale.US).equals("N")) && Integer.parseInt(values[7]) >= 4) { // at least one "good" system needs a fix
+										lat = nmeaLatToDecimal(values[2])*(values[3].toUpperCase(Locale.US).equals("N")?1:-1);
+										lon = nmeaLonToDecimal(values[4])*(values[5].toUpperCase(Locale.US).equals("E")?1:-1);
+										hdop = Double.parseDouble(values[8]);
+										height = Double.parseDouble(values[9]);
+										posUpdate = true;
+									}
+								} catch (NumberFormatException e) {
+									Log.d("TrackerService","Invalid number format in " + sentence);
+									return;
 								}
-							} catch (NumberFormatException e) {
-								Log.d("TrackerService","Invalid number format in " + sentence);
+							} else {
+								Log.d("TrackerService","Invalid number " + values.length + " of values " + sentence);
 								return;
 							}
-						} else {
-							Log.d("TrackerService","Invalid number " + values.length + " of values " + sentence);
-							return;
-						}
-					} else if (s.equals("GGA")) {
-						String[] values = withoutChecksum.split(",",-14); // java magic
-						if (values.length==15) {
-							try {
-								if (!values[6].equals("0") && Integer.parseInt(values[7]) >= 4) { // we need a fix
-									lat = nmeaLatToDecimal(values[2])*(values[3].toUpperCase(Locale.US).equals("N")?1:-1);
-									lon = nmeaLonToDecimal(values[4])*(values[5].toUpperCase(Locale.US).equals("E")?1:-1);
-									hdop = Double.parseDouble(values[8]);
-									height = Double.parseDouble(values[9]);
-									posUpdate = true;
+						} else if (s.equals("GGA")) {
+							String[] values = withoutChecksum.split(",",-14); // java magic
+							if (values.length==15) {
+								try {
+									if (!values[6].equals("0") && Integer.parseInt(values[7]) >= 4) { // we need a fix
+										lat = nmeaLatToDecimal(values[2])*(values[3].toUpperCase(Locale.US).equals("N")?1:-1);
+										lon = nmeaLonToDecimal(values[4])*(values[5].toUpperCase(Locale.US).equals("E")?1:-1);
+										hdop = Double.parseDouble(values[8]);
+										height = Double.parseDouble(values[9]);
+										posUpdate = true;
+									}
+								} catch (NumberFormatException e) {
+									Log.d("TrackerService","Invalid number format in " + sentence);
+									return;
 								}
-							} catch (NumberFormatException e) {
-								Log.d("TrackerService","Invalid number format in " + sentence);
+							} else {
+								Log.d("TrackerService","Invalid number " + values.length + " of values " + sentence);
 								return;
 							}
-						} else {
-							Log.d("TrackerService","Invalid number " + values.length + " of values " + sentence);
-							return;
-						}
-					} else if (s.equals("VTG")) {
-						String[] values = withoutChecksum.split(",",-11); // java magic
-						if (values.length==12) {
-							try {
-								if (!values[9].toUpperCase(Locale.US).startsWith("N")) {
-									course = Double.parseDouble(values[1]);
-									nmeaLocation.setBearing((float)course);
-									speed = Double.parseDouble(values[7]);
-									nmeaLocation.setSpeed((float)(speed/3.6D));
+						} else if (s.equals("VTG")) {
+							String[] values = withoutChecksum.split(",",-11); // java magic
+							if (values.length==12) {
+								try {
+									if (!values[9].toUpperCase(Locale.US).startsWith("N")) {
+										course = Double.parseDouble(values[1]);
+										nmeaLocation.setBearing((float)course);
+										speed = Double.parseDouble(values[7]);
+										nmeaLocation.setSpeed((float)(speed/3.6D));
+									}
+								} catch (NumberFormatException e) {
+									Log.d("TrackerService","Invalid number format in " + sentence);
+									return;
 								}
-							} catch (NumberFormatException e) {
-								Log.d("TrackerService","Invalid number format in " + sentence);
+							} else {
+								Log.d("TrackerService","Invalid number " + values.length + " of values " + sentence);
 								return;
 							}
-						} else {
-							Log.d("TrackerService","Invalid number " + values.length + " of values " + sentence);
+						} else { 
+							// unsupported sentence
 							return;
 						}
-					} else { 
-						// unsupported sentence
+						// Log.d("TrackerService","Got from NMEA " + lat + " " + lon + " " + hdop + " " + height);
+						// the following assumes that the behaviour of the GPS receiver will not change
+						// and assume multiple systems are better than GPS which in turn is better the GLONASS ... this naturally may not be really true
+						if (system==GnssSystem.NONE) { // take whatever we get
+							if (talker.equals("GP")) {
+								system=GnssSystem.GPS;
+							} else if (talker.equals("GL")) {
+								system=GnssSystem.GLONASS;
+							} else if (talker.equals("GN")) {
+								system=GnssSystem.MULTIPLE;
+							} else {
+								// new system we don't know about? BEIDOU probably best ignored for now
+								return;
+							}
+						} else if (system==GnssSystem.GLONASS) {
+							if (talker.equals("GP")) {
+								system=GnssSystem.GPS;
+							} else if (talker.equals("GN")) {
+								system=GnssSystem.MULTIPLE;
+							}
+						}else if (system==GnssSystem.GPS) {
+							if (talker.equals("GL")) {
+								// ignore
+								return;
+							} else if (talker.equals("GN")) {
+								system=GnssSystem.MULTIPLE;
+							}
+						} else if (system==GnssSystem.MULTIPLE) {
+							if (!talker.equals("GN")) {
+								return;
+							}
+						}
+
+						if (posUpdate) { // we could do filtering etc here
+							nmeaLocation.setAltitude(height);
+							nmeaLocation.setLatitude(lat);
+							nmeaLocation.setLongitude(lon);
+							// can't call something on the UI thread directly need to send a message
+							Message newLocation = mHandler.obtainMessage(LOCATION_UPDATE, nmeaLocation);
+							// Log.d("TrackerService","Update " + l);
+							newLocation.sendToTarget();
+							if (tracking) {
+								track.addTrackPoint(nmeaLocation);
+							}
+							NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
+							if (activeNetworkInfo != null && activeNetworkInfo.isConnectedOrConnecting()) { // only attempt to download if we have a network
+								if (downloading) {
+									autoDownload(new Location(nmeaLocation));
+								}
+								if (downloadingBugs) {
+									bugAutoDownload(new Location(nmeaLocation));
+								}
+							}
+							lastLocation = nmeaLocation;
+						}
 						return;
 					}
-					// Log.d("TrackerService","Got from NMEA " + lat + " " + lon + " " + hdop + " " + height);
-					// the following assumes that the behaviour of the GPS receiver will not change
-					// and assume multiple systems are better than GPS which in turn is better the GLONASS ... this naturally may not be really true
-					if (system==GnssSystem.NONE) { // take whatever we get
-						if (talker.equals("GP")) {
-							system=GnssSystem.GPS;
-						} else if (talker.equals("GL")) {
-							system=GnssSystem.GLONASS;
-						} else if (talker.equals("GN")) {
-							system=GnssSystem.MULTIPLE;
-						} else {
-							// new system we don't know about? BEIDOU probably best ignored for now
-							return;
-						}
-					} else if (system==GnssSystem.GLONASS) {
-						if (talker.equals("GP")) {
-							system=GnssSystem.GPS;
-						} else if (talker.equals("GN")) {
-							system=GnssSystem.MULTIPLE;
-						}
-					}else if (system==GnssSystem.GPS) {
-						if (talker.equals("GL")) {
-							// ignore
-							return;
-						} else if (talker.equals("GN")) {
-							system=GnssSystem.MULTIPLE;
-						}
-					} else if (system==GnssSystem.MULTIPLE) {
-						if (!talker.equals("GN")) {
-							return;
-						}
-					}
-
-					if (posUpdate) { // we could do filtering etc here
-						nmeaLocation.setAltitude(height);
-						nmeaLocation.setLatitude(lat);
-						nmeaLocation.setLongitude(lon);
-						// can't call something on the UI thread directly need to send a message
-						Message newLocation = mHandler.obtainMessage(LOCATION_UPDATE, nmeaLocation);
-						// Log.d("TrackerService","Update " + l);
-						newLocation.sendToTarget();
-						if (tracking) {
-							track.addTrackPoint(nmeaLocation);
-						}
-						NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
-						if (activeNetworkInfo != null && activeNetworkInfo.isConnectedOrConnecting()) { // only attempt to download if we have a network
-							if (downloading) {
-								autoDownload(new Location(nmeaLocation));
-							}
-							if (downloadingBugs) {
-								bugAutoDownload(new Location(nmeaLocation));
-							}
-						}
-						lastLocation = nmeaLocation;
-					}
-					return;
+					// Log.d(TAG,"Checksum failed " + sentence);
 				}
+				// Log.d(TAG,"Misformed sentence " + sentence + " star " + star + " length " + sentence.length());
 			}
+			// Log.d(TAG,"Misformed sentence " + sentence);
+		} catch (Exception e) {
+			Log.e(TAG, "NMEA sentance " + sentence + " caused exception " + e);
+			ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
+			ACRA.getErrorReporter().handleException(e);
 		}
-		Log.d("TrackerService","Checksum failed on " + sentence);
 	}
 
 	/**
@@ -737,12 +750,13 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 
 		@Override
 		public void run() {
+			Socket socket = null;
 			DataOutputStream dos = null;
 			BufferedReader input = null;
 			try {
 				Log.d("TrackerService", "Connecting to " + host+":"+port + " ...");
 
-				Socket socket = new Socket(host, port);
+				socket = new Socket(host, port);
 				dos = new DataOutputStream(socket.getOutputStream());
 
 				InputStreamReader isr = new InputStreamReader(socket.getInputStream());
@@ -761,6 +775,9 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 				failed.sendToTarget();
 			} finally {
 				SavingHelper.close(dos);
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+					SavingHelper.close(socket);
+				}
 				SavingHelper.close(input);
 			}
 		}
@@ -850,7 +867,7 @@ public class TrackerService extends Service implements LocationListener, NmeaLis
 						}
 						storageDelegator.addBoundingBox(b);  // will be filled once download is complete
 						Log.d(TAG,"getNextCenter loading " + b.toString());
-						Logic.autoDownloadBox(this,prefs.getServer(), b); 
+						Application.getLogic().autoDownloadBox(this,prefs.getServer(), b); 
 					}
 				}
 				previousLocation  = location;

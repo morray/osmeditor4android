@@ -16,12 +16,10 @@ import org.xmlpull.v1.XmlSerializer;
 
 import android.content.Context;
 import android.content.res.Resources;
-import android.os.Parcelable;
 import de.blau.android.Application;
 import de.blau.android.R;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetItem;
-import de.blau.android.propertyeditor.PropertyEditor;
 import de.blau.android.util.IssueAlert;
 
 public abstract class OsmElement implements Serializable, XmlSerializable, JosmXmlSerializable {
@@ -29,7 +27,7 @@ public abstract class OsmElement implements Serializable, XmlSerializable, JosmX
 	/**
 	 * 
 	 */
-	private static final long serialVersionUID = 7711945069147743668L;
+	private static final long serialVersionUID = 7711945069147743670L;
 	
 	/**
 	 * An array of tags considered 'important' and distinctive enough to be shown as part of
@@ -174,6 +172,20 @@ public abstract class OsmElement implements Serializable, XmlSerializable, JosmX
 	 * @return true if the element has a tag with this key and value.
 	 */
 	public boolean hasTag(final String key, final String value) {
+		if (tags == null) {
+			return false;
+		}
+		String keyValue = tags.get(key);
+		return keyValue != null && keyValue.equals(value);
+	}
+	
+	/**
+	 * @param tags tags to use instead of the standard ones
+	 * @param key the key to search for (case sensitive)
+	 * @param value the value to search for (case sensitive)
+	 * @return true if the element has a tag with this key and value.
+	 */
+	public boolean hasTag(final Map<String,String> tags, final String key, final String value) {
 		if (tags == null) {
 			return false;
 		}
@@ -384,14 +396,26 @@ public abstract class OsmElement implements Serializable, XmlSerializable, JosmX
 			}
 		}
 		// Then the value of the most 'important' tag the element has
+		String tag = getPrimaryTag();
+		if (tag != null) {
+			return (withType ? getName() + " " : "") + tag;
+		}
+		
+		// Failing the above, the OSM ID
+		return (withType ? getName() + " #" : "#") + Long.toString(getOsmId());
+	}
+	
+	/**
+	 * @return the first kay =value of any important tags or null if none found
+	 */
+	public String getPrimaryTag() {
 		for (String tag : importantTags) {
 			String value = getTagWithKey(tag);
 			if (value != null && value.length() > 0) {
-				return (withType ? getName() + " " : "") + tag + "=" + value;
+				return  tag + "=" + value;
 			}
 		}
-		// Failing the above, the OSM ID
-		return (withType ? getName() + " #" : "#") + Long.toString(getOsmId());
+		return null;
 	}
 	
 	/**
@@ -485,12 +509,20 @@ public abstract class OsmElement implements Serializable, XmlSerializable, JosmX
 	 * @return the {@link ElementType} of the element */
 	public abstract ElementType getType();
 	
-	/** Enum for element types (Node, Way, Closedway) */
+	/**
+	 * Version of above that uses a potential different set of tags
+	 * @param tags
+	 * @return
+	 */
+	public abstract ElementType getType(Map<String, String>tags);
+	
+	/** Enum for element types (Node, Way, Closed Ways, Relations, Areas (MPs) */
 	public enum ElementType {
 		NODE,
 		WAY,
 		CLOSEDWAY,
-		RELATION
+		RELATION,
+		AREA
 	}
 
 	/**

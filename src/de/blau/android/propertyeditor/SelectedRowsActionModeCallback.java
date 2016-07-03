@@ -1,21 +1,20 @@
 package de.blau.android.propertyeditor;
 
 
-import android.content.Context;
-import android.support.v4.app.Fragment;
-import android.view.View;
-import android.widget.LinearLayout;
-
-import com.actionbarsherlock.view.ActionMode;
-import com.actionbarsherlock.view.ActionMode.Callback;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuItem;
-
 import java.util.ArrayList;
 
-import de.blau.android.Application;
+import android.content.Context;
+import android.support.v4.app.Fragment;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.view.ActionMode;
+import android.support.v7.view.ActionMode.Callback;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.LinearLayout;
 import de.blau.android.HelpViewer;
 import de.blau.android.R;
+import de.blau.android.easyedit.EasyEditManager;
 import de.blau.android.util.ThemeUtils;
 import de.blau.android.util.Util;
 
@@ -28,11 +27,10 @@ public class SelectedRowsActionModeCallback implements Callback {
 		void deselect();
 
 		boolean isSelected();
-
 	}
-
+	
 	protected static final int MENU_ITEM_DELETE = 1;
-	protected static final int MENU_ITEM_HELP = 8;
+	protected static final int MENU_ITEM_HELP = 15;
 
 	ActionMode currentAction;
 
@@ -46,7 +44,6 @@ public class SelectedRowsActionModeCallback implements Callback {
 
 	@Override
 	public boolean onCreateActionMode(ActionMode mode, Menu menu) {
-		mode.setTitle(R.string.tag_action_title);
 		currentAction = mode;
 		((PropertyEditor)caller.getActivity()).disablePaging();
 		((PropertyEditor)caller.getActivity()).disablePresets();
@@ -59,7 +56,7 @@ public class SelectedRowsActionModeCallback implements Callback {
 		Context context = caller.getActivity();
 		menu.add(Menu.NONE, MENU_ITEM_DELETE, Menu.NONE, R.string.delete)
 				.setIcon(ThemeUtils.getResIdFromAttribute(context, R.attr.menu_delete));
-		menu.add(Menu.NONE, MENU_ITEM_HELP, Menu.NONE, R.string.menu_help)
+		menu.add(EasyEditManager.GROUP_BASE, MENU_ITEM_HELP, Menu.CATEGORY_SYSTEM, R.string.menu_help)
 				.setAlphabeticShortcut(Util.getShortCut(context, R.string.shortcut_help))
 				.setIcon(ThemeUtils.getResIdFromAttribute(context, R.attr.menu_help));
 		return true;
@@ -80,6 +77,7 @@ public class SelectedRowsActionModeCallback implements Callback {
 			}
 			if (toDelete.size() > 0) {
 				for (Row r : toDelete) {
+					r.deselect();
 					r.delete();
 				}
 			}
@@ -105,10 +103,11 @@ public class SelectedRowsActionModeCallback implements Callback {
 		}
 		((PropertyEditor)caller.getActivity()).enablePaging();
 		((PropertyEditor)caller.getActivity()).enablePresets();
-		PropertyRows relation = (PropertyRows)caller;
-		relation.deselectHeaderCheckBox();
+		PropertyRows rowContainer = (PropertyRows)caller;
+		rowContainer.deselectHeaderCheckBox();
+		rowContainer.deselectRow();
 		currentAction = null;
-		relation.deselectRows(); // synchronized method
+		((AppCompatActivity)caller.getActivity()).supportInvalidateOptionsMenu();
 	}
 
 	public boolean rowsDeselected(boolean skipHeaderRow) {
@@ -127,6 +126,12 @@ public class SelectedRowsActionModeCallback implements Callback {
 			currentAction.finish();
 		}
 		return true;
+	}
+
+	public void invalidate() {
+		if (currentAction != null) {
+			currentAction.invalidate();
+		}
 	}
 
 }

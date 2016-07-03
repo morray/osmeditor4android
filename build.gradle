@@ -6,7 +6,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:1.5.0'
+        classpath 'com.android.tools.build:gradle:2.1.0'
     }
 }
 
@@ -21,14 +21,14 @@ allprojects {
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 22
-    buildToolsVersion "22.0.1"
+    compileSdkVersion 23
+    buildToolsVersion "23.0.2"
 
     defaultConfig {
-        minSdkVersion 7
-        targetSdkVersion 16
-        versionCode 41
-        versionName "0.9.5.1.955"
+        minSdkVersion project.getMinSdkVersion()
+        targetSdkVersion project.getTargetSdkVersion()
+        versionCode project.getVersionCode()
+        versionName "${project.getVersionName()}"
     }
 
     sourceSets {
@@ -64,6 +64,40 @@ android {
 
 dependencies {
     compile fileTree(dir: 'libs', include: '*.jar')
-    compile 'com.actionbarsherlock:actionbarsherlock:4.4.0@aar'
-    compile 'com.android.support:support-v4:22.2.1'
+    compile 'com.android.support:appcompat-v7:23.3.0'
+    compile 'com.android.support:recyclerview-v7:23.3.0'
+    compile 'com.android.support:preference-v7:23.3.0'
+    compile 'com.android.support:design:23.3.0'
+}
+
+int getMinSdkVersion() {
+    def xml = getXmlFromFile("${projectDir}/AndroidManifest.xml")
+    return xml.'uses-sdk'.@'android:minSdkVersion'.toInteger()
+}
+
+int getTargetSdkVersion() {
+    def xml = getXmlFromFile("${projectDir}/AndroidManifest.xml")
+    return xml.'uses-sdk'.@'android:targetSdkVersion'.toInteger()
+}
+
+int getVersionCode() {
+    def xml = getXmlFromFile("${projectDir}/AndroidManifest.xml")
+    return xml.@'android:versionCode'.toInteger()
+}
+
+String getVersionName() {
+    def xml = getXmlFromFile("${projectDir}/res/values/appname.xml")
+    def versionName = xml.string.find { it.@name == 'app_version' }.toString()
+    if (versionName == null || versionName.length() == 0) {
+        throw new NullPointerException("Failure extracting version name.")
+    }
+    return versionName
+}
+
+def getXmlFromFile(String xmlFilePath) {
+    def xml = new XmlSlurper().parse(new File(xmlFilePath))
+    if (xml == null) {
+        throw new NullPointerException("Failure reading from " + xmlFilePath)
+    }
+    return xml;
 }

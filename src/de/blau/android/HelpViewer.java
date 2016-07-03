@@ -1,36 +1,33 @@
 package de.blau.android;
 
-
-
 import java.io.IOException;
-import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.content.res.TypedArray;
-import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-
-
 import android.support.annotation.NonNull;
 import android.support.annotation.StringRes;
-import android.support.v4.app.ActionBarDrawerToggle;
 import android.support.v4.widget.DrawerLayout;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.ActionBarDrawerToggle;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
-import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -38,15 +35,8 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.FrameLayout;
 import android.widget.ListView;
-
-import com.actionbarsherlock.app.ActionBar;
-import com.actionbarsherlock.app.SherlockActivity;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuInflater;
-import com.actionbarsherlock.view.MenuItem;
-
 import de.blau.android.prefs.Preferences;
-import de.blau.android.util.ThemeUtils;
+import de.blau.android.util.BugFixedAppCompatActivity;
 
 
 /**
@@ -55,7 +45,9 @@ import de.blau.android.util.ThemeUtils;
  * @author simon
  *
  */
-public class HelpViewer extends SherlockActivity {
+public class HelpViewer extends BugFixedAppCompatActivity {
+	
+	static String DEBUG_TAG = HelpViewer.class.getName();
 	
 	class HelpItem implements Comparable<HelpItem> {
 		boolean displayLanguage = false;
@@ -85,6 +77,7 @@ public class HelpViewer extends SherlockActivity {
 	public static final String TOPIC = "topic";
 	WebView helpView;
 	
+	ActionBarDrawerToggle mDrawerToggle;
 	// drawer that will be our ToC
 	private DrawerLayout mDrawerLayout;
 	private ListView mDrawerList;
@@ -107,6 +100,15 @@ public class HelpViewer extends SherlockActivity {
 		super.onCreate(savedInstanceState);
 		int topicId = (Integer)getIntent().getSerializableExtra(TOPIC);
 		String topic = getString(topicId); // this assumes that the resources are the same, which is probably safe
+		
+		setContentView(R.layout.help_drawer);
+
+		
+//        // Find the toolbar view inside the activity layout
+//        Toolbar toolbar = (Toolbar) findViewById(R.id.helpToolbar);
+//        // Sets the Toolbar to act as the ActionBar for this Activity window.
+//        // Make sure the toolbar exists in the activity and is not null
+//        setSupportActionBar(toolbar);
 
 		ActionBar actionbar = getSupportActionBar();
 		if (actionbar == null) {
@@ -118,7 +120,9 @@ public class HelpViewer extends SherlockActivity {
 		actionbar.setDisplayShowTitleEnabled(true);
 		actionbar.show();
 
-		setContentView(R.layout.help_drawer);
+
+		
+		
 		
 		// add our content
 		FrameLayout fl =  (FrameLayout) findViewById(R.id.content_frame);
@@ -126,9 +130,11 @@ public class HelpViewer extends SherlockActivity {
 		WebSettings helpSettings = helpView.getSettings();
 		helpSettings.setDefaultFontSize(12);
 		helpSettings.setSupportZoom(true);
-		helpSettings.setBuiltInZoomControls(true);
+		
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
 			helpSettings.setDisplayZoomControls(false); // don't display +-
+		} else {
+			helpSettings.setBuiltInZoomControls(true);
 		}
 		helpView.setWebViewClient(new HelpViewWebViewClient());
 		fl.addView(helpView);
@@ -139,11 +145,10 @@ public class HelpViewer extends SherlockActivity {
 		
 		actionbar.setHomeButtonEnabled(true);
 		actionbar.setDisplayHomeAsUpEnabled(true);
-		ActionBarDrawerToggle mDrawerToggle = new ActionBarDrawerToggle(this, mDrawerLayout, ThemeUtils.getResIdFromAttribute(this,R.attr.drawer), R.string.okay, R.string.okay);
-		mDrawerLayout.setDrawerListener(mDrawerToggle);
-		
+		mDrawerToggle = new ActionBarDrawerToggle(this, mDrawerLayout, R.string.okay, R.string.okay);
+		mDrawerToggle.setDrawerIndicatorEnabled(true);
+		mDrawerLayout.addDrawerListener(mDrawerToggle);	
 
-		
 		try {
 			List<String> defaultList = Arrays.asList(getResources().getAssets().list("help/" + Locale.getDefault().getLanguage()));
 			List<String> enList = Arrays.asList(getResources().getAssets().list("help/en"));
@@ -210,39 +215,47 @@ public class HelpViewer extends SherlockActivity {
 	 */
  	@Override
 	public boolean onCreateOptionsMenu(final Menu menu) {
-		final MenuInflater inflater = getSupportMenuInflater();
+		final MenuInflater inflater = getMenuInflater(); 
 		inflater.inflate(R.menu.help_menu, menu);
 		return true;
  	}
  	
+ 	@Override
+ 	public boolean onOptionsItemSelected(final MenuItem item) {
+ 		if (mDrawerToggle.onOptionsItemSelected(item)) {
+ 			return true;
+ 		}
+ 		Log.d(DEBUG_TAG, "onOptionsItemSelected");
+ 		switch (item.getItemId()) {
+ 		case R.id.help_menu_back:
+ 			if (helpView.canGoBack()) {
+ 				helpView.goBack();
+ 				// getSupportActionBar().setTitle(getString(R.string.menu_help) + ": " + getTopic(helpView.getUrl()));
+ 			} else {
+ 				onBackPressed(); // return to caller
+ 			}
+ 			return true;
+
+ 		case R.id.help_menu_forward:
+ 			if (helpView.canGoForward()) {
+ 				helpView.goForward();
+ 				// getSupportActionBar().setTitle(getString(R.string.menu_help) + ": " + getTopic(helpView.getUrl()));
+ 			}
+ 			return true;
+ 		}
+ 		return false;
+ 	}
+
 	@Override
-	public boolean onOptionsItemSelected(final MenuItem item) {
-		Log.d("Main", "onOptionsItemSelected");
-		switch (item.getItemId()) {
-		case R.id.help_menu_back:
-			if (helpView.canGoBack()) {
-				helpView.goBack();
-				// getSupportActionBar().setTitle(getString(R.string.menu_help) + ": " + getTopic(helpView.getUrl()));
-			} else {
-				onBackPressed(); // return to caller
-			}
-			return true;
-			
-		case R.id.help_menu_forward:
-			if (helpView.canGoForward()) {
-				helpView.goForward();
-				// getSupportActionBar().setTitle(getString(R.string.menu_help) + ": " + getTopic(helpView.getUrl()));
-			}
-			return true;
-		case android.R.id.home:
-			if (mDrawerLayout.isDrawerOpen(mDrawerList)) {
-				mDrawerLayout.closeDrawer(mDrawerList);
-			} else {
-				mDrawerLayout.openDrawer(mDrawerList);
-			}
-			return true;
-		}
-		return false;
+	protected void onPostCreate(Bundle savedInstanceState) {
+		super.onPostCreate(savedInstanceState);
+		mDrawerToggle.syncState();
+	}
+
+	@Override
+	public void onConfigurationChanged(Configuration newConfig) {
+		super.onConfigurationChanged(newConfig);
+		mDrawerToggle.onConfigurationChanged(newConfig);
 	}
 	
 	private class DrawerItemClickListener implements ListView.OnItemClickListener {
@@ -289,13 +302,16 @@ public class HelpViewer extends SherlockActivity {
 	
 	private String getTopic(String url) {
 		
-		url = URLDecoder.decode(url);
+		try {
+			url = URLDecoder.decode(url,"UTF-8");
+		} catch (UnsupportedEncodingException e) {
+			return "Error, got: " + url;
+		}
 		int lastSlash = url.lastIndexOf('/');
 		int lastDot = url.lastIndexOf('.');
 		if (lastSlash < 0 || lastDot < 0) {
 			return "Error, got: " + url;
 		}
-		String topic = url.substring(lastSlash+1,lastDot); 
-		return topic;
+		return url.substring(lastSlash+1,lastDot);
 	}
 }

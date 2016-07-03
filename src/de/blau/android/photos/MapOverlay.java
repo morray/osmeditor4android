@@ -4,10 +4,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
+import android.support.v4.content.ContextCompat;
 import android.util.Log;
 import android.widget.Toast;
 import de.blau.android.Application;
@@ -15,7 +17,7 @@ import de.blau.android.Map;
 import de.blau.android.R;
 import de.blau.android.osm.BoundingBox;
 import de.blau.android.osm.Server;
-import de.blau.android.resources.Profile;
+import de.blau.android.resources.DataStyle;
 import de.blau.android.util.GeoMath;
 import de.blau.android.views.IMapView;
 import de.blau.android.views.overlay.OpenStreetMapViewOverlay;
@@ -26,6 +28,8 @@ import de.blau.android.views.overlay.OpenStreetMapViewOverlay;
  *
  */
 public class MapOverlay extends OpenStreetMapViewOverlay {
+	
+	private final static String DEBUG_TAG = "PhotoOverlay";
 	
 	/** viewbox needs to be less wide than this for displaying bugs, just to avoid querying the whole world for bugs */ 
 	private static final int TOLERANCE_MIN_VIEWBOX_WIDTH = 40000 * 32;
@@ -77,6 +81,7 @@ public class MapOverlay extends OpenStreetMapViewOverlay {
 				indexing = true;
 				publishProgress(0);
 				pi.createOrUpdateIndex();
+				pi.fill(null);
 				publishProgress(1);
 				indexing = false;
 				indexed = true;
@@ -101,15 +106,16 @@ public class MapOverlay extends OpenStreetMapViewOverlay {
 	};		
 
 	public MapOverlay(final Map map, Server s) {
+		Context context = Application.mainActivity;
 		this.map = map;
 		photos = new ArrayList<Photo>();
-		icon = Application.mainActivity.getResources().getDrawable(R.drawable.camera_red);
-		icon_selected = Application.mainActivity.getResources().getDrawable(R.drawable.camera_green);
+		icon = ContextCompat.getDrawable(context, R.drawable.camera_red);
+		icon_selected = ContextCompat.getDrawable(context, R.drawable.camera_green);
 		// note this assumes the icons are the same size
 		w2 = icon.getIntrinsicWidth() / 2;
 		h2 = icon.getIntrinsicHeight() / 2;
 		
-		pi = new PhotoIndex(Application.mainActivity);
+		pi = new PhotoIndex(context);
 	}
 	
 	@Override
@@ -129,11 +135,12 @@ public class MapOverlay extends OpenStreetMapViewOverlay {
 			if ((bb.getWidth() > TOLERANCE_MIN_VIEWBOX_WIDTH) || (bb.getHeight() > TOLERANCE_MIN_VIEWBOX_WIDTH)) {
 				return;
 			}
+		
 			if (!indexed && !indexing) {
 				indexPhotos.execute();
 				return;
 			}
-		
+			
 			// draw all the photos
 			int w = map.getWidth();
 			int h = map.getHeight();
@@ -175,7 +182,7 @@ public class MapOverlay extends OpenStreetMapViewOverlay {
 		List<Photo> result = new ArrayList<Photo>();
 		Log.d("photos.MapOverlay", "getClickedPhotos");	
 		if (map.getPrefs().isPhotoLayerEnabled()) {
-			final float tolerance = Profile.getCurrent().nodeToleranceValue;
+			final float tolerance = DataStyle.getCurrent().nodeToleranceValue;
 			for (Photo p : photos) {
 				int lat = p.getLat();
 				int lon = p.getLon();

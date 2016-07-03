@@ -5,19 +5,18 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.TreeMap;
 
 import org.xmlpull.v1.XmlSerializer;
 
 import android.util.Log;
 import de.blau.android.Application;
 import de.blau.android.R;
-import de.blau.android.resources.Profile.FeatureProfile;
+import de.blau.android.resources.DataStyle.FeatureStyle;
 import de.blau.android.util.GeoMath;
+import de.blau.android.util.rtree.BoundedObject;
 
-public class Way extends OsmElement {
+public class Way extends OsmElement implements BoundedObject {
 
 	/**
 	 * 
@@ -34,7 +33,7 @@ public class Way extends OsmElement {
 	
 	public static int maxWayNodes = 2000; // if API has a different value it will replace this
 	
-	transient FeatureProfile featureProfile = null; // FeatureProfile is currently not serializable
+	transient FeatureStyle featureProfile = null; // FeatureProfile is currently not serializable
 	
 	static {
 		importantHighways = (
@@ -53,7 +52,8 @@ public class Way extends OsmElement {
 	 * @param node
 	 */
 	void addNode(final Node node) {
-		if ((nodes.size() > 0) && (nodes.get(nodes.size() - 1) == node)) {
+		int size = nodes.size();
+		if ((size > 0) && (nodes.get(size - 1) == node)) {
 			Log.i("Way", "addNode attempt to add same node " + node.getOsmId() + " to " + getOsmId());
 			return;
 		}
@@ -144,11 +144,20 @@ public class Way extends OsmElement {
 		s.endTag("", "way");
 	}
 	
-
+	/**
+	 * Returns true if "node" is a way node of this way
+	 * @param node
+	 * @return
+	 */
 	public boolean hasNode(final Node node) {
 		return nodes.contains(node);
 	}
 
+	/**
+	 * Returns true if this way has a common node with "way"
+	 * @param way
+	 * @return
+	 */
 	public boolean hasCommonNode(final Way way) {
 		for (Node n : this.nodes) {
 			if (way.hasNode(n)) {
@@ -156,6 +165,20 @@ public class Way extends OsmElement {
 			}
 		}
  		return false;
+	}
+	
+	/**
+	 * Returns the first found common node with "way" or null if their are none
+	 * @param way
+	 * @return
+	 */
+	public Node getCommonNode(Way way) {
+		for (Node n : this.nodes) {
+			if (way.hasNode(n)) {
+				return n;
+			}
+		}
+		return null;
 	}
 	
 	void removeNode(final Node node) {
@@ -167,7 +190,6 @@ public class Way extends OsmElement {
 			}
 		}
 		while (nodes.remove(node)) {
-			;
 		}
 	}
 	
@@ -230,279 +252,7 @@ public class Way extends OsmElement {
 			nodes.addAll(newNodes);
 		}
 	}
-	
-	/**
-	 * Return the direction dependent tags and associated values 
-	 * oneway, *:left, *:right, *:backward, *:forward
-	 * Probably we should check for issues with relation membership too 
-	 * @return
-	 */
-	public Map<String, String> getDirectionDependentTags() {
-		Map<String, String> result = null;
-		if (tags != null) {
-			for (String key : tags.keySet()) {
-				String value = tags.get(key);
-				if ("oneway".equals(key) || "incline".equals(key) 
-						|| "turn".equals(key) || "turn:lanes".equals(key)
-						|| "direction".equals(key) || key.endsWith(":left") 
-						|| key.endsWith(":right") || key.endsWith(":backward") 
-						|| key.endsWith(":forward") 
-						|| key.contains(":forward:") || key.contains(":backward:")
-						|| key.contains(":right:") || key.contains(":left:")
-						|| value.equals("right") || value.equals("left") 
-						|| value.equals("forward") || value.equals("backward")) {
-					if (result == null) {
-						result = new TreeMap<String, String>();
-					}
-					result.put(key, value);
-				}
-			}
-		}
-		return result;
-	}
-	
-	/**
-	 * Return a list of (route) relations that this way is a member of with a direction dependent role
-	 * @return
-	 */
-	public List<Relation> getRelationsWithDirectionDependentRoles() {
-		ArrayList<Relation> result = null;
-		if (getParentRelations() != null) {
-			for (Relation r:getParentRelations()) {
-				String t = r.getTagWithKey(Tags.KEY_TYPE);
-				if (t != null && Tags.VALUE_ROUTE.equals(t)) {
-					RelationMember rm = r.getMember(Way.NAME, getOsmId());
-					if (rm != null && ("forward".equals(rm.getRole()) || "backward".equals(rm.getRole()))) {
-						if (result == null) {
-							result = new ArrayList<Relation>();
-						}
-						result.add(r);
-					}
-				}
-			}
-		}
-		return result;
-	}
-	
-	/**
-	 * Reverse the role of this way in any relations it is in (currently only relevant for routes)
-	 * @param relations
-	 */
-	public void reverseRoleDirection(List<Relation> relations) {
-		if (relations != null) {
-			for (Relation r:relations) {
-				for (RelationMember rm:r.getMembers()) {
-					if (rm.role != null && "forward".equals(rm.role)) {
-						rm.setRole("backward");
-						continue;
-					} 
-					if (rm.role != null && "backward".equals(rm.role)) {
-						rm.setRole("forward");
-						continue;
-					} 
-				}
-			}
-		}
-	}
-	
-	private String reverseCardinalDirection(final String value) throws NumberFormatException
-	{
-		String tmpVal = "";
-		for (int i=0;i<value.length();i++) {
-			switch (value.toUpperCase(Locale.US).charAt(i)) {
-				case 'N': tmpVal = tmpVal + 'S'; break;
-				case 'W': tmpVal = tmpVal + 'E'; break;
-				case 'S': tmpVal = tmpVal + 'N'; break;
-				case 'E': tmpVal = tmpVal + 'W'; break;
-				default: throw new NumberFormatException(); 
-			}
-		}
-		return tmpVal;
-	}
-	
-	private String reverseDirection(final String value) {
-		if (value.equals("up")) {
-			return "down";
-		} else if (value.equals("down")) {
-			return "up";
-		} else {
-			if (value.endsWith("°")) { //degrees
-				try {
-					String tmpVal = value.substring(0,value.length()-1);
-					return floatToString(((Float.valueOf(tmpVal)+180.0f) % 360.0f)) + "°";
-				} catch (NumberFormatException nex) {
-					// oops put back original values 
-					return value;
-				}
-			} else if (value.matches("-?\\d+(\\.\\d+)?")) { //degrees without degree symbol
-				try {
-					return floatToString(((Float.valueOf(value)+180.0f) % 360.0f));
-				} catch (NumberFormatException nex) {
-					// oops put back original values 
-					return value;
-				}
-			} else { // cardinal directions
-				try {
-					return reverseCardinalDirection(value);
-				} catch (NumberFormatException fex) {
-					return value;
-				}
-			}
-		}
-	}
-	
-	private String reverseTurnLanes(final String value) {
-		String tmpValue = "";
-		for (String s:value.split("\\|")) {
-			String tmpValue2 = "";
-			for (String s2:s.split(";")) {
-				if (s2.indexOf("right") >= 0) {
-					s2 = s2.replace("right", "left");
-				} else if (s.indexOf("left") >= 0) {
-					s2 = s2.replace("left", "right");	
-				}
-				if (tmpValue2.equals("")) {	
-					tmpValue2 = s2;
-				} else {
-					tmpValue2 = s2 + ";" + tmpValue2; // reverse order 
-				}
-			}
-			if (tmpValue.equals("")) {	
-				tmpValue = tmpValue2;
-			} else {
-				tmpValue = tmpValue2 + "|" + tmpValue; // reverse order 
-			}
-		}
-		return tmpValue;
-	}
-	
-	private String reverseIncline(final String value) {
-		String tmpVal;
-		if (value.equals("up")) {
-			return "down";
-		} else if (value.equals("down")) {
-			return "up";
-		} else {
-			try {
-				if (value.endsWith("°")) { //degrees
-					tmpVal = value.substring(0,value.length()-1);
-					return floatToString((Float.valueOf(tmpVal)*-1)) + "°";
-				} else if (value.endsWith("%")) { // percent{
-					tmpVal = value.substring(0,value.length()-1);
-					return floatToString((Float.valueOf(tmpVal)*-1)) + "%";
-				} else {
-					return floatToString((Float.valueOf(value)*-1));
-				}
-			} catch (NumberFormatException nex) {
-				// oops put back original values 
-				return value;
-			}
-		}
-
-	}
-	
-	private String reverseOneway(final String value) {
-		if (value.equalsIgnoreCase("yes") || value.equalsIgnoreCase("true") || value.equals("1")) {
-			return "-1";
-		} else if (value.equalsIgnoreCase("reverse") || value.equals("-1")) {
-			return "yes";
-		}
-		return value;
-	}
-	
-	/**
-	 * Reverse the direction dependent tags and save them to tags
-	 * Note this code in its original version ran in to complexity limits on Android 2.2 (and probably older). Eliminating if .. else if constructs seems to have
-	 * resolved this
-	 * @param tags Map of all direction dependent tags
-	 * @param reverseOneway if false don't change the value of the oneway tag if present
-	 */
-	public void reverseDirectionDependentTags(Map<String, String> dirTags, boolean reverseOneway) {
-		if (tags == null) {
-			return;
-		}
-		for (String key : dirTags.keySet()) {
-			if (!key.equals("oneway") || reverseOneway) {
-				String value = tags.get(key).trim();
-				tags.remove(key); //			
-				if (key.equals("oneway")) {
-					tags.put(key, reverseOneway(value));
-					continue;
-				} 
-				if (key.equals("direction")) {
-					tags.put(key, reverseDirection(value));
-					continue;
-				} 
-				if (key.equals("incline")) {
-					tags.put(key, reverseIncline(value));
-					continue;
-				} 
-				if (key.equals("turn:lanes") || key.equals("turn")) { // turn:lane:forward/backward doesn't need to be handled special
-					tags.put(key,reverseTurnLanes(value));
-					continue;
-				} 
-				if (key.endsWith(":left")) { // this would be more elegant in a loop
-					tags.put(key.substring(0, key.length()-5) + ":right", value);
-					continue;
-				} 
-				if (key.endsWith(":right")) {
-					tags.put(key.substring(0, key.length()-6) + ":left", value);
-					continue;
-				} 
-				if (key.endsWith(":backward")) {
-					tags.put(key.substring(0, key.length()-9) + ":forward", value);
-					continue;
-				} 
-				if (key.endsWith(":forward")) {
-					tags.put(key.substring(0, key.length()-8) + ":backward", value);
-					continue;
-				} 
-				if (key.indexOf(":forward:") >= 0) {
-					tags.put(key.replace(":forward:", ":backward:"), value);
-					continue;
-				} 
-				if (key.indexOf(":backward:") >= 0) {
-					tags.put(key.replace(":backward:", ":forward:"), value);
-					continue;
-				} 
-				if (key.indexOf(":right:") >= 0) {
-					tags.put(key.replace(":right:", ":left:"), value);
-					continue;
-				} 
-				if (key.indexOf(":left:") >= 0) {
-					tags.put(key.replace(":left:", ":right:"), value);
-					continue;
-				} 
-				if (value.equals("right")) {  // doing this for all values is probably dangerous
-					tags.put(key, "left");
-					continue;
-				} 
-				if (value.equals("left")) {
-					tags.put(key, "right");
-					continue;
-				} 
-				if (value.equals("forward")) {
-					tags.put(key, "backward");
-					continue;
-				} 
-				if (value.equals("backward")) {
-					tags.put(key, "forward");
-					continue;
-				} 
-				// can't happen should throw an exception
-				tags.put(key,value);
-			}
-		}
-	}
-	
-	String floatToString(float f)
-	{
-		if(f == (int) f)
-	        return String.format(Locale.US, "%d",(int)f);
-	    else
-	        return String.format(Locale.US,"%s",f);
-	}
-	
+		
 	/**
 	 * Reverses the direction of the way
 	 */
@@ -667,6 +417,11 @@ public class Way extends OsmElement {
 	}
 	
 	@Override
+	public ElementType getType(Map<String,String> tags) {
+		return getType();
+	}
+	
+	@Override
 	void updateState(final byte newState) {
 		featureProfile = null; // force recalc of style
 		super.updateState(newState);
@@ -678,11 +433,11 @@ public class Way extends OsmElement {
 		super.setState(newState);
 	}
 	
-	public FeatureProfile getFeatureProfile() {
+	public FeatureStyle getFeatureProfile() {
 		return featureProfile;
 	}
 	
-	public void setFeatureProfile(FeatureProfile fp) {
+	public void setFeatureProfile(FeatureStyle fp) {
 		featureProfile = fp;
 	}
 	
@@ -744,6 +499,7 @@ public class Way extends OsmElement {
 		for (Node n : getNodes()) {
 			if (first) {
 				result = new BoundingBox(n.lon,n.lat);
+				first = false;
 			} else {
 				result.union(n.lon,n.lat);
 			}

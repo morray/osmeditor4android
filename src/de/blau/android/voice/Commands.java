@@ -1,50 +1,33 @@
 package de.blau.android.voice;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.TreeMap;
 
 import android.content.Context;
 import android.content.Intent;
 import android.location.Location;
 import android.location.LocationManager;
-import android.os.Bundle;
 import android.speech.RecognizerIntent;
-import android.util.Log;
-import android.view.View;
-import android.view.View.OnClickListener;
-import android.widget.ArrayAdapter;
-import android.widget.ImageButton;
-import android.widget.ListView;
 import android.widget.Toast;
-
-import com.actionbarsherlock.app.ActionBar;
-import com.actionbarsherlock.app.SherlockActivity;
-
 import de.blau.android.Application;
 import de.blau.android.Logic;
 import de.blau.android.R;
-import de.blau.android.names.Names;
 import de.blau.android.names.Names.NameAndTags;
 import de.blau.android.osm.Node;
-import de.blau.android.osm.StorageDelegator;
-import de.blau.android.osm.Tags;
 import de.blau.android.osm.OsmElement.ElementType;
-import de.blau.android.prefs.Preferences;
+import de.blau.android.osm.Tags;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetItem;
 import de.blau.android.propertyeditor.Address;
 import de.blau.android.tasks.Note;
-import de.blau.android.tasks.Task;
 import de.blau.android.util.ElementSearch;
 import de.blau.android.util.GeoMath;
-import de.blau.android.util.MultiHashMap;
 import de.blau.android.util.OptimalStringAlignment;
 import de.blau.android.util.SearchIndexUtils;
 import de.blau.android.util.StringWithDescription;
@@ -76,13 +59,13 @@ public class Commands {
 		// Fill the list view with the strings the recognizer thought it
 		// could have heard
 		ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-		Logic logic = Application.mainActivity.getLogic();
+		final Logic logic = Application.getLogic();
 		// try to find a command it simply stops at the first string that is valid
 		for (String v:matches) {
 			Toast.makeText(ctx,">"+v+"<", Toast.LENGTH_LONG).show();
 			String[] words = v.split("\\s+", 3);
 			if (words.length > 1) {
-				String loc = words[0].toLowerCase(); 
+				String loc = words[0].toLowerCase(Locale.getDefault()); 
 				if (match(R.string.voice_left,loc) || match(R.string.voice_here,loc) || match(R.string.voice_right,loc) || match(R.string.voice_note,loc) ) {
 					if (match(R.string.voice_note,loc)) {
 						Note n = createNote(words, location);
@@ -93,7 +76,7 @@ public class Commands {
 						Toast.makeText(ctx,"Sorry currently only the command \"" + ctx.getString(R.string.voice_here) + "\" is supported", Toast.LENGTH_LONG).show();
 					} 
 					// 
-					String first = words[1].toLowerCase();
+					String first = words[1].toLowerCase(Locale.getDefault());
 					try {
 						int number = Integer.parseInt(first);
 						// worked if there is a further word(s) simply add it/them
@@ -103,7 +86,7 @@ public class Commands {
 							TreeMap<String, String> tags = new TreeMap<String, String>(node.getTags());
 							tags.put(Tags.KEY_ADDR_HOUSENUMBER, "" + number  + (words.length == 3?words[2]:""));
 							tags.put("source:original_text", v);
-							LinkedHashMap<String, ArrayList<String>> map = Address.predictAddressTags(Node.NAME, node.getOsmId(), 
+							LinkedHashMap<String, ArrayList<String>> map = Address.predictAddressTags(ctx, Node.NAME, node.getOsmId(), 
 										new ElementSearch(new int[]{node.getLon(),node.getLat()}, true), 
 										Util.getArrayListMap(tags), Address.NO_HYSTERESIS);
 							tags = new TreeMap<String, String>();
@@ -117,7 +100,7 @@ public class Commands {
 						// ok wasn't a number
 					}
 
-					List<PresetItem> presetItems = SearchIndexUtils.searchInPresets(ctx, first.toString(),ElementType.NODE,2,1);
+					List<PresetItem> presetItems = SearchIndexUtils.searchInPresets(ctx, first,ElementType.NODE,2,1);
 					if (presetItems != null && presetItems.size()==1) {
 						addNode(createNode(loc,location), words.length == 3? words[2]:null, presetItems.get(0), logic, v);
 						return;
@@ -180,17 +163,14 @@ public class Commands {
 	 */
 	Node createNode(String loc, Location location) {
 		if (location == null) {
-			LocationManager locationManager = (LocationManager)Application.mainActivity.getSystemService(android.content.Context.LOCATION_SERVICE);
-			if (locationManager != null) {
-				location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-			}
+			location = getLocation();
 		}
 		if (location != null) {
 			if (ctx.getString(R.string.voice_here).equals(loc)) {
 				double lon = location.getLongitude();
 				double lat = location.getLatitude();
 				if (lon >= -180 && lon <= 180 && lat >= -GeoMath.MAX_LAT && lat <= GeoMath.MAX_LAT) {
-					Logic logic = Application.mainActivity.getLogic();
+					final Logic logic = Application.getLogic();
 					logic.setSelectedNode(null);
 					Node node = logic.performAddNode(lon, lat);
 					logic.setSelectedNode(null);
@@ -203,10 +183,7 @@ public class Commands {
 	
 	Note createNote(String[] words, Location location) {
 		if (location == null) {
-			LocationManager locationManager = (LocationManager)Application.mainActivity.getSystemService(android.content.Context.LOCATION_SERVICE);
-			if (locationManager != null) {
-				location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-			}
+			location = getLocation();
 		}
 		if (location != null) {		
 			double lon = location.getLongitude();
@@ -223,6 +200,19 @@ public class Commands {
 				n.setChanged();
 				Application.getTaskStorage().add(n);
 				return n;
+			}
+		}
+		return null;
+	}
+	
+	Location getLocation() {
+		LocationManager locationManager = (LocationManager)ctx.getSystemService(android.content.Context.LOCATION_SERVICE);
+		if (locationManager != null) {
+			try {
+				return locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+			} catch (SecurityException sex) {
+				// can be safely ignored
+				return null;
 			}
 		}
 		return null;

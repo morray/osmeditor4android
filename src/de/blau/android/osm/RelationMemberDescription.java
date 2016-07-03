@@ -1,10 +1,13 @@
 package de.blau.android.osm;
+
+import de.blau.android.Application;
+
 /*
  * RelationMemberDescritption is an extended version of RelationMember that holds a textual description of the element 
  * instead of the element itself
  */
 public class RelationMemberDescription extends RelationMember {
-	private static final long serialVersionUID = 1104911642016294267L;
+	private static final long serialVersionUID = 1104911642016294268L;
 	private String description = null;
 	private boolean downloaded = false;
 	
@@ -30,5 +33,47 @@ public class RelationMemberDescription extends RelationMember {
 	
 	public boolean downloaded() {
 		return downloaded;
+	}
+	
+	/**
+	 * If an downloaded element is present update description and downloaded status
+	 */
+	public void update() {
+		OsmElement e = getElement();
+		if (e != null) {
+			description = e.getDescription(false);
+			downloaded = true;
+		}
+	}
+	
+	/**
+	 * This returns (if present), the element directly from storage
+	 */
+	@Override
+	public OsmElement getElement() {
+		return super.getElement()==null ? Application.getDelegator().getOsmElement(getType(), getRef()):super.getElement();
+	}
+	
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (o instanceof RelationMemberDescription 
+				&& ref == ((RelationMemberDescription) o).ref 
+				&& type.equals(((RelationMemberDescription) o).type) 
+				&& (role == ((RelationMemberDescription) o).role || (role != null && role.equals(((RelationMemberDescription) o).role)))) {
+			return true;
+		}
+		return false;
+	}
+	
+	@Override
+	public int hashCode() {
+		int result = 17;
+		result = 37 * result + (int)(ref ^ (ref >>> 32));
+		result = 37 * result + (type == null ? 0 : type.hashCode());
+		result = 37 * result + (role == null ? 0 : role.hashCode());
+		return result;
 	}
 }

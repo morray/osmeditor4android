@@ -1,30 +1,24 @@
 package de.blau.android.propertyeditor;
 
-import java.util.HashMap;
-
-import android.app.Activity;
+import android.content.Context;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
-
-import com.actionbarsherlock.app.SherlockFragment;
-
 import de.blau.android.Application;
-import de.blau.android.Main;
 import de.blau.android.R;
 import de.blau.android.osm.OsmElement;
-import de.blau.android.osm.Relation;
 import de.blau.android.osm.OsmElement.ElementType;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetClickHandler;
 import de.blau.android.presets.Preset.PresetGroup;
 import de.blau.android.presets.Preset.PresetItem;
 import de.blau.android.propertyeditor.PresetFragment.OnPresetSelectedListener;
+import de.blau.android.util.BaseFragment;
 
-public class RecentPresetsFragment extends SherlockFragment {
+public class RecentPresetsFragment extends BaseFragment {
 
 	private static final String DEBUG_TAG = RecentPresetsFragment.class.getSimpleName();
 	
@@ -48,13 +42,12 @@ public class RecentPresetsFragment extends SherlockFragment {
     }
     
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
-        Log.d(DEBUG_TAG, "onAttach");
+    public void onAttachToContext(Context context) {
+        Log.d(DEBUG_TAG, "onAttachToContext");
         try {
-            mListener = (OnPresetSelectedListener) activity;
+            mListener = (OnPresetSelectedListener) context;
         } catch (ClassCastException e) {
-            throw new ClassCastException(activity.toString() + " must implement OnPresetSelectedListener");
+            throw new ClassCastException(context.toString() + " must implement OnPresetSelectedListener");
         }
     }
 
@@ -125,8 +118,6 @@ public class RecentPresetsFragment extends SherlockFragment {
     				};
     			v = presets[0].getRecentPresetView(getActivity(), presets, presetClickHandler, filterType); //TODO this should really be a call of a static method, all MRUs get added to this view
 
-    			// v.setBackgroundColor(getResources().getColor(R.color.tagedit_field_bg));
-    			v.setPadding(Preset.SPACING, Preset.SPACING, Preset.SPACING, Preset.SPACING);
     			v.setId(R.id.recentPresets);
     		} else {
     			Log.d(DEBUG_TAG,"getRecentPresetsView no MRU found!");

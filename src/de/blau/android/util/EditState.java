@@ -1,9 +1,12 @@
 package de.blau.android.util;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.List;
 
+import android.content.Context;
 import android.util.Log;
+import de.blau.android.Application;
 import de.blau.android.Logic;
 import de.blau.android.Logic.Mode;
 import de.blau.android.Main;
@@ -13,10 +16,9 @@ import de.blau.android.osm.BoundingBox;
 import de.blau.android.osm.Node;
 import de.blau.android.osm.Relation;
 import de.blau.android.osm.Way;
-import de.blau.android.resources.Profile;
-import de.blau.android.tasks.Note;
+import de.blau.android.resources.DataStyle;
+import de.blau.android.resources.TileLayerServer;
 import de.blau.android.tasks.Task;
-import de.blau.android.views.util.OpenStreetMapTileServer;
 
 /**
  * Save the edit state accros pause / resume cycles
@@ -24,7 +26,7 @@ import de.blau.android.views.util.OpenStreetMapTileServer;
  *
  */
 public class EditState implements Serializable {
-	private static final long serialVersionUID = 11L;
+	private static final long serialVersionUID = 14L;
 	final Mode savedMode;
 	final List<Node> savedNodes;
 	final List<Way> savedWays;
@@ -33,28 +35,28 @@ public class EditState implements Serializable {
 	final String savedTileServerID;
 	final Offset[] savedOffsets;
 	final int savedMinZoom;
-	final boolean savedShowGPS;
-	final boolean savedAutoDownload;
-	final boolean savedBugAutoDownload;
 	final String savedImageFileName;
 	final BoundingBox savedBox;
+	final ArrayList<String> savedLastComments;
+	final ArrayList<String> savedLastSources;
+	final NotificationCache savedTaskNotifications;
+	final NotificationCache savedOsmDataNotifications;
 
-	public EditState(Mode mode, List<Node> selectedNodes, List<Way> selectedWays,
-			List<Relation> selectedRelations, Task selectedBug, OpenStreetMapTileServer osmts, 
-			boolean showGPS, boolean autoDownload, boolean bugAutoDownload, String imageFileName, BoundingBox box) {
-		savedMode = mode;
-		savedNodes = selectedNodes;
-		savedWays = selectedWays;
-		savedRelations = selectedRelations;
-		savedBug = selectedBug;
+	public EditState(Context context,Logic logic,  TileLayerServer osmts, String imageFileName, BoundingBox box) {
+		savedMode = logic.getMode();
+		savedNodes = logic.getSelectedNodes();
+		savedWays = logic.getSelectedWays();
+		savedRelations = logic.getSelectedRelations();
+		savedBug = logic.getSelectedBug();
 		savedTileServerID = osmts.getId();
 		savedOffsets = osmts.getOffsets();
 		savedMinZoom = osmts.getMinZoomLevel();
-		savedShowGPS = showGPS;
-		savedAutoDownload = autoDownload;
-		savedBugAutoDownload = bugAutoDownload;
 		savedImageFileName = imageFileName;
 		savedBox = box;
+		savedLastComments = logic.getLastComments();
+		savedLastSources = logic.getLastSources();
+		savedTaskNotifications = Application.getTaskNotifications(context);
+		savedOsmDataNotifications = Application.getOsmDataNotifications(context);
 	}
 	
 	public void setSelected(Logic logic) {
@@ -62,22 +64,25 @@ public class EditState implements Serializable {
 		Log.d("EditState","savedMode " + savedMode);
 		if (savedNodes != null) {
 			for (Node n:savedNodes) {
-				if (logic.exists(n)) {
-					logic.addSelectedNode(n);
+				Node nodeInStorage = (Node) Application.getDelegator().getOsmElement(Node.NAME,n.getOsmId());
+				if (nodeInStorage != null) {
+					logic.addSelectedNode(nodeInStorage);
 				}
 			}
 		}
 		if (savedWays != null) {
 			for (Way w:savedWays) {
-				if (logic.exists(w)) {
-					logic.addSelectedWay(w);
+				Way wayInStorage = (Way) Application.getDelegator().getOsmElement(Way.NAME,w.getOsmId());
+				if (wayInStorage != null) {
+					logic.addSelectedWay(wayInStorage);
 				}
 			}
 		}
 		if (savedRelations != null) {
 			for (Relation r:savedRelations) {
-				if (logic.exists(r)) {
-					logic.addSelectedRelation(r);
+				Relation relationInStorage = (Relation) Application.getDelegator().getOsmElement(Relation.NAME,r.getOsmId());
+				if (relationInStorage != null) {
+					logic.addSelectedRelation(relationInStorage);
 				}
 			}
 		}
@@ -85,11 +90,12 @@ public class EditState implements Serializable {
 		logic.setSelectedBug(savedBug);
 	}
 	
-	public void setMiscState(Main main) {
-		main.setShowGPS(savedShowGPS);
-		main.setAutoDownload(savedAutoDownload);
-		main.setBugAutoDownload(savedBugAutoDownload);
+	public void setMiscState(Main main, Logic logic) {
 		main.setImageFileName(savedImageFileName);
+		logic.setLastComments(savedLastComments);
+		logic.setLastSources(savedLastSources);
+		Application.setTaskNotifications(main,savedTaskNotifications);
+		Application.setOsmDataNotifications(main,savedOsmDataNotifications);
 	}
 	
 	public void setViewBox(Logic logic, Map map) {
@@ -100,11 +106,11 @@ public class EditState implements Serializable {
 			// shouldn't happen since we would have only stored a legal BB
 		}
 		map.setViewBox(logic.getViewBox());
-		Profile.updateStrokes(Logic.STROKE_FACTOR / logic.getViewBox().getWidth());
+		DataStyle.updateStrokes(Logic.STROKE_FACTOR / logic.getViewBox().getWidth());
 		map.invalidate();
 	}
 	
-	public void setOffset(OpenStreetMapTileServer osmts) {
+	public void setOffset(TileLayerServer osmts) {
 		Log.d("EditState","setOffset saved id " + savedTileServerID + " current id " + osmts.getId());
 		if (osmts.getId().equals(savedTileServerID)) {
 			Log.d("EditState","restoring offset");

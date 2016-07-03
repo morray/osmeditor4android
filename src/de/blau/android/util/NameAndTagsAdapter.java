@@ -3,14 +3,10 @@ package de.blau.android.util;
 import java.util.ArrayList;
 import java.util.Locale;
 
-import de.blau.android.names.Names.NameAndTags;
 import android.content.Context;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Filter;
-import android.widget.TextView;
+import de.blau.android.names.Names.NameAndTags;
 
 public class NameAndTagsAdapter extends ArrayAdapter<NameAndTags> {
 	
@@ -23,7 +19,7 @@ public class NameAndTagsAdapter extends ArrayAdapter<NameAndTags> {
     public NameAndTagsAdapter(Context context, int viewResourceId, ArrayList<NameAndTags> items) {
         super(context, viewResourceId, items);
 //        this.items = items;
-        this.itemsAll = (ArrayList<NameAndTags>) items.clone();
+        this.itemsAll = new ArrayList<NameAndTags>(items);
         this.suggestions = new ArrayList<NameAndTags>();
 //        this.viewResourceId = viewResourceId;
     }
@@ -75,10 +71,10 @@ public class NameAndTagsAdapter extends ArrayAdapter<NameAndTags> {
             }
         }
         
-        @Override
+        @SuppressWarnings("unchecked")
+		@Override
         protected void publishResults(CharSequence constraint, FilterResults results) {
         	 if(results != null && results.count > 0) {
-        		//noinspection unchecked
         		ArrayList<NameAndTags> filteredList = (ArrayList<NameAndTags>) results.values;
                 clear();
                 for (NameAndTags c : filteredList) {

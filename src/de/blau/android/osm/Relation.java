@@ -2,17 +2,20 @@ package de.blau.android.osm;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 import org.xmlpull.v1.XmlSerializer;
 
+import android.content.Context;
+import android.util.Log;
 import de.blau.android.Application;
 import de.blau.android.R;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetItem;
-import android.content.Context;
-import android.util.Log;
+import de.blau.android.util.rtree.BoundedObject;
 
 /**
  * Relation represents an OSM relation element which essentially is a collection of other OSM elements.
@@ -20,7 +23,7 @@ import android.util.Log;
  * @author simon
  *
  */
-public class Relation extends OsmElement {
+public class Relation extends OsmElement implements BoundedObject {
 
 	/**
 	 * 
@@ -38,7 +41,7 @@ public class Relation extends OsmElement {
 		members = new ArrayList<RelationMember>();
 	}
 
-	public void addMember(final RelationMember member) {
+	protected void addMember(final RelationMember member) {
 		members.add(member);
 	}
 
@@ -52,7 +55,7 @@ public class Relation extends OsmElement {
 	
 	/**
 	 * Return first relation member element for this OSM element
-	 * Note: if the element is present more than once you will only get ont
+	 * Note: if the element is present more than once you will only get one
 	 * @param e
 	 * @return
 	 */
@@ -64,6 +67,22 @@ public class Relation extends OsmElement {
 			}
 		}
 		return null;
+	}
+	
+	/**
+	 * Return all relation member elements for this OSM element
+	 * @param e
+	 * @return
+	 */
+	public List<RelationMember> getAllMembers(OsmElement e) {
+		ArrayList<RelationMember> result = new ArrayList<RelationMember>();
+		for (int i = 0; i < members.size(); i++) {
+			RelationMember member = members.get(i);
+			if (member.getElement() == e) {
+				result.add(member);
+			}
+		}
+		return result;
 	}
 	
 	/**
@@ -167,13 +186,12 @@ public class Relation extends OsmElement {
 	 * Does not update backlink
 	 * @param member
 	 */
-	void removeMember(final RelationMember member) {
+	protected void removeMember(final RelationMember member) {
 		while (members.remove(member)) {
-			;
 		}
 	}
 
-	void appendMember(final RelationMember refMember, final RelationMember newMember) {
+	protected void appendMember(final RelationMember refMember, final RelationMember newMember) {
 		if (members != null && members.size() > 0 && members.get(0) == refMember) {
 			members.add(0, newMember);
 		} else if (members != null && members.get(members.size() - 1) == refMember) {
@@ -181,11 +199,11 @@ public class Relation extends OsmElement {
 		}
 	}
 
-	void addMemberAfter(final RelationMember memberBefore, final RelationMember newMember) {
+	protected void addMemberAfter(final RelationMember memberBefore, final RelationMember newMember) {
 		members.add(members.indexOf(memberBefore) + 1, newMember);
 	}
 	
-	void addMember(int pos, final RelationMember newMember) {
+	protected void addMember(int pos, final RelationMember newMember) {
 		if (pos < 0 || pos > members.size()) {
 			pos = members.size(); // append
 		}
@@ -198,7 +216,7 @@ public class Relation extends OsmElement {
 	 * @param newMembers a list of new members
 	 * @param atBeginning if true, nodes are prepended, otherwise, they are appended
 	 */
-	void addMembers(List<RelationMember> newMembers, boolean atBeginning) {
+	protected void addMembers(List<RelationMember> newMembers, boolean atBeginning) {
 		if (atBeginning) {
 			members.addAll(0, newMembers);
 		} else {
@@ -227,6 +245,16 @@ public class Relation extends OsmElement {
 		while ((idx = members.indexOf(existing)) != -1) {
 			members.set(idx, newMember);
 		}
+	}
+	
+	/**
+	 * Replace all existing members in a relation.
+	 * @param existing The existing member to be replaced.
+	 * @param newMember The new member.
+	 */
+	protected void replaceMembers(Collection<RelationMember> newMembers) {
+		members.clear();
+		members.addAll(newMembers);
 	}
 
 	/**
@@ -323,9 +351,17 @@ public class Relation extends OsmElement {
 
 	@Override
 	public ElementType getType() {
-		return ElementType.RELATION;
+		return getType(tags);
 	}
 
+	@Override
+	public ElementType getType(Map<String,String> tags) {
+		if (hasTag(tags, Tags.KEY_TYPE,Tags.VALUE_MULTIPOLYGON) || hasTag(tags, Tags.KEY_TYPE,Tags.VALUE_BOUNDARY)) {
+			return ElementType.AREA;
+		}
+		return ElementType.RELATION;
+	}
+	
 	/**
 	 * return a list of the downloaded elements
 	 * @return

@@ -6,7 +6,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map.Entry;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnCancelListener;
@@ -14,10 +13,17 @@ import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.support.v4.content.ContextCompat;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.AlertDialog;
+import android.support.v7.widget.ActionMenuView.OnMenuItemClickListener;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
+import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
@@ -27,14 +33,8 @@ import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ListAdapter;
 import android.widget.TextView;
-
-import com.actionbarsherlock.app.ActionBar;
-import com.actionbarsherlock.app.SherlockListActivity;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuItem;
-import com.actionbarsherlock.view.MenuItem.OnMenuItemClickListener;
-
 import de.blau.android.R;
+import de.blau.android.util.ThemeUtils;
 
 /**
  * This activity allows the user to edit a list of URLs.
@@ -49,7 +49,7 @@ import de.blau.android.R;
  * @author Jan
  *
  */
-public abstract class URLListEditActivity extends SherlockListActivity implements OnMenuItemClickListener, android.view.MenuItem.OnMenuItemClickListener, OnItemClickListener {
+public abstract class URLListEditActivity extends ListActivity implements OnMenuItemClickListener, android.view.MenuItem.OnMenuItemClickListener, OnItemClickListener {
 
 	public static final String ACTION_NEW = "new";
 	public static final String EXTRA_NAME = "name";
@@ -74,12 +74,12 @@ public abstract class URLListEditActivity extends SherlockListActivity implement
 	protected final LinkedHashMap<Integer, Integer> additionalMenuItems = new LinkedHashMap<Integer, Integer>();
 	
 	public URLListEditActivity() {
-		ctx = this; // Change when changing Activity to Fragment
+		ctx = this;
 		items = new ArrayList<URLListEditActivity.ListEditItem>();
 	}
 	
 	public URLListEditActivity(List<ListEditItem> items) {
-		ctx = this; // Change when changing Activity to Fragment
+		ctx = this;
 		this.items = items;
 	}
 
@@ -87,14 +87,15 @@ public abstract class URLListEditActivity extends SherlockListActivity implement
 	public void onCreate(Bundle savedInstanceState) {
 		Preferences prefs = new Preferences(this);
 		if (prefs.lightThemeEnabled()) {
-			setTheme(R.style.Theme_Sherlock_Light);
+			setTheme(R.style.Theme_customLight);
 		}
 		super.onCreate(savedInstanceState);
+		setContentView(R.layout.list_activity);
 		r = getResources();
 		onLoadList(items);
 		TextView v = (TextView)View.inflate(ctx, android.R.layout.simple_list_item_1, null);
 		v.setText(r.getString(getAddTextResId()));
-		v.setTextColor(ctx.getResources().getColor(android.R.color.darker_gray));
+		v.setTextColor(ContextCompat.getColor(ctx,android.R.color.darker_gray));
 		v.setTypeface(null,Typeface.ITALIC);
 		getListView().addFooterView(v);
 		
@@ -183,11 +184,6 @@ public abstract class URLListEditActivity extends SherlockListActivity implement
 		return onMenuItemClick(menuitem.getItemId());
 	}
 	
-	@Override
-	public boolean onMenuItemClick(android.view.MenuItem menuitem) {
-		return onMenuItemClick(menuitem.getItemId());
-	}
-	
 	/**
 	 * Add an additional menu item. Override {@link #onAdditionalMenuItemClick(int, ListEditItem)} to handle it.
 	 * @param menuId a non-negative integer by which you will recognize the menu item
@@ -213,7 +209,9 @@ public abstract class URLListEditActivity extends SherlockListActivity implement
  	 */
 	protected void itemEditDialog(final ListEditItem item) {
 		final AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
-		final View mainView = View.inflate(ctx, R.layout.listedit_edit, null);
+		final LayoutInflater inflater = ThemeUtils.getLayoutInflater(ctx);
+		final View mainView = inflater.inflate(R.layout.listedit_edit, null);
+		
 		final TextView editName = (TextView)mainView.findViewById(R.id.listedit_editName);
 		final TextView editValue = (TextView)mainView.findViewById(R.id.listedit_editValue);
 		if (item != null) {

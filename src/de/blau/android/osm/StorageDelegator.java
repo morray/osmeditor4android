@@ -36,6 +36,7 @@ import de.blau.android.util.GeoMath;
 import de.blau.android.util.SavingHelper;
 import de.blau.android.util.SavingHelper.Exportable;
 import de.blau.android.util.Util;
+import de.blau.android.util.collections.LongOsmElementMap;
 
 public class StorageDelegator implements Serializable, Exportable {
 
@@ -261,14 +262,23 @@ public class StorageDelegator implements Serializable, Exportable {
 
 	/**
 	 * Create empty relation
+	 * @param members 
 	 * @return
 	 */
-	public Relation createAndInsertRelation() {
+	public Relation createAndInsertRelation(List<OsmElement> members) {
 		// undo - nothing done here, way gets saved/marked on insert
 		dirty = true;
 		
 		Relation relation = factory.createRelationWithNewId();
 		insertElementUnsafe(relation);
+		if (members != null) {
+			for (OsmElement e:members) {
+				undo.save(e);
+				RelationMember rm = new RelationMember("", e);
+				relation.addMember(rm);
+				e.addParentRelation(relation);
+			}
+		}
 		return relation;
 	}
 	
@@ -461,91 +471,172 @@ public class StorageDelegator implements Serializable, Exportable {
 	}
 	
 	/**
+	 * Build groups of ways that have common nodes
+	 * There must be a better way to do this, but they likely all fall afoul of our current data model
+	 * @param ways
+	 * @return
+	 */
+	ArrayList<ArrayList<Way>> groupWays(List<Way> ways) {
+		ArrayList<ArrayList<Way>> groups = new ArrayList<ArrayList<Way>>();
+		int group = 0;
+		int index = 0;
+		int groupIndex = 1;
+		groups.add(new ArrayList<Way>());
+		Way startWay = ways.get(index);
+		groups.get(group).add(startWay);
+		do {
+			do {
+				for (Node nd:startWay.getNodes()) {
+					for (Way w:ways) {
+						if (w.getNodes().contains(nd) && !groups.get(group).contains(w)) {
+							groups.get(group).add(w);
+						}
+					}
+				}
+				if (groupIndex < groups.get(group).size()) {
+					startWay = groups.get(group).get(groupIndex);
+					groupIndex++;
+				}
+			} while (groupIndex < groups.get(group).size());
+			// repeat until no new ways are added in the loop
+
+			// find the next way that is not in a group and start a new one
+			for (;index<ways.size();index++) {
+				Way w = ways.get(index);
+				boolean found = false;
+				for (ArrayList<Way>list:groups) {
+					found = found || list.contains(w);
+				}
+				if (!found) {
+					group++;
+					groups.add(new ArrayList<Way>());
+					startWay = w;
+					groupIndex = 1;
+					break;
+				}
+			}
+		} while (index<ways.size());
+
+		Log.d(DEBUG_TAG,"number of groups found " + groups.size());
+		return groups;
+	}
+	
+	/**
 	 * "square" a way/polygon, based on the algorithm used by iD and before that by P2, originally written by Matt Amos
+	 * If multiple ways are selected the ways are grouped in groups that share nodes and the groups individually squared.
 	 * @param way
 	 */
-	public void orthogonalizeWay(Way way) {
+	public void orthogonalizeWay(List<Way> ways) {
 		final int threshold = 10; // degrees within right or straight to alter
 		final double lowerThreshold = Math.cos((90 - threshold) * Math.PI / 180);
 		final double upperThreshold = Math.cos(threshold * Math.PI / 180);
 		final double epsilon = 1e-4;
 		
-		if ((way.getNodes() == null) || (way.getNodes().size()<3)) {
-			Log.d("StorageDelegator", "orthogonalize way " + way.getOsmId() + " has no nodes or less than 3!");
-			return;
-		}
 		dirty = true;
 		try {
 			// save nodes for undo
-			Node firstNode = way.getFirstNode();
-			for (int i = 0; i < way.getNodes().size(); i++) { 
-				Node nd = way.getNodes().get(i);
-				if (i == 0 || !nd.equals(firstNode)) {
-					undo.save(nd);
+			// adding to a Set first removes duplication
+			HashSet<Node> save = new HashSet<Node>();
+			for (Way way:ways) {
+				if (way.getNodes() != null) {
+					save.addAll(way.getNodes()); 
 				}
 			}
-			Coordinates coords[] = nodeListToCooardinateArray(way.getNodes());
-			Coordinates a, b, c, p, q;
-			int start = 0;
-			int end = coords.length;
-			if (!way.isClosed()) {
-				start = 1;
-				end = end-1;
-			}
-			// iterate until score is low enough
-			for (int iteration = 0; iteration < 1000; iteration++) {
-				Coordinates motions[] = new Coordinates[coords.length];
-				for (int i=start;i<end;i++) {
-					a = coords[(i - 1 + coords.length) % coords.length];
-					b = coords[i];
-			        c = coords[(i + 1) % coords.length];
-			        p = a.subtract(b);
-			        q = c.subtract(b);
-			        double scale = 2 * Math.min(Math.hypot(p.x,p.y), Math.hypot(q.x,q.y));
-		            p = normalize(p, 1.0);
-		            q = normalize(q, 1.0);
-		            double dotp = filter((p.x * q.x + p.y * q.y), lowerThreshold, upperThreshold);
-
-		            // nasty hack to deal with almost-straight segments (angle is closer to 180 than to 90/270).   
-		            if (dotp < -0.707106781186547) {
-		            	dotp += 1.0;
-		            }
-		            motions[i] = normalize(p.add(q), 0.1 * dotp * scale);
-				}
-				// apply position changes
-				for (int i=start;i<end;i++) {
-					coords[i] = coords[i].add(motions[i]);
-				}
-				// calculate score
-				double score = 0.0;
-				for (int i=start;i<end;i++) {
-					// yes I know that this -nearly- dups the code above
-					a = coords[(i - 1 + coords.length) % coords.length];
-					b = coords[i];
-			        c = coords[(i + 1) % coords.length];
-			        p = a.subtract(b);
-			        q = c.subtract(b);
-			        p = normalize(p, 1.0);
-		            q = normalize(q, 1.0);
-		            double dotp = filter((p.x * q.x + p.y * q.y), lowerThreshold, upperThreshold);
-		            
-		            score = score + 2.0 * Math.min(Math.abs(dotp-1.0), Math.min(Math.abs(dotp), Math.abs(dotp+1.0)));
-				}
-				// Log.d("StorageDelegator", "orthogonalize way iteration/score " + iteration + "/" + score);
-				if (score < epsilon) break;
+			for (Node nd:save) {
+				undo.save(nd);
 			}
 			
-			// prepare updated nodes for upload
-			int width = Application.mainActivity.getMap().getWidth();
-			int height = Application.mainActivity.getMap().getHeight();
-			BoundingBox box = Application.mainActivity.getMap().getViewBox();
-			for (int i = 0; i < way.getNodes().size(); i++) { 
-				Node nd = way.getNodes().get(i);
-				if (i == 0 || !nd.equals(firstNode)) {
-					nd.setLon(GeoMath.xToLonE7(width, box, coords[i].x));
-					nd.setLat(GeoMath.yToLatE7(height, width, box, coords[i].y));
-					apiStorage.insertElementSafe(nd);
-					nd.updateState(OsmElement.STATE_MODIFIED);
+			List<ArrayList<Way>> groups = groupWays(ways);
+			
+			for (ArrayList<Way> wayList:groups) { 
+				// Coordinates coords[] = nodeListToCooardinateArray(nodes);
+				ArrayList<Coordinates[]> coordsArray = new ArrayList<Coordinates[]>();
+				int totalNodes = 0;
+				for (Way w:wayList) {
+					coordsArray.add(nodeListToCooardinateArray(w.getNodes()));
+					totalNodes += w.getNodes().size();
+				}
+				Coordinates a, b, c, p, q;
+				
+				double loopEpsilon = epsilon*(totalNodes/4D); //NOTE the original algorithm didn't take the number of corners in to account
+				
+				// iterate until score is low enough
+				for (int iteration = 0; iteration < 1000; iteration++) {
+					for (int coordIndex=0;coordIndex<coordsArray.size();coordIndex++) {
+						Coordinates[] coords = coordsArray.get(coordIndex);
+						int start = 0;
+						int end = coords.length;
+						if (!wayList.get(coordIndex).isClosed()) {
+							start = 1;
+							end = end-1;
+						}
+						Coordinates motions[] = new Coordinates[coords.length];
+						for (int i=start;i<end;i++) {
+							a = coords[(i - 1 + coords.length) % coords.length];
+							b = coords[i];
+							c = coords[(i + 1) % coords.length];
+							p = a.subtract(b);
+							q = c.subtract(b);
+							double scale = 2 * Math.min(Math.hypot(p.x,p.y), Math.hypot(q.x,q.y));
+							p = normalize(p, 1.0);
+							q = normalize(q, 1.0);
+							double dotp = filter((p.x * q.x + p.y * q.y), lowerThreshold, upperThreshold);
+
+							// nasty hack to deal with almost-straight segments (angle is closer to 180 than to 90/270).   
+							if (dotp < -0.707106781186547) {
+								dotp += 1.0;
+							}
+							motions[i] = normalize(p.add(q), 0.1 * dotp * scale);
+						}
+						// apply position changes
+						for (int i=start;i<end;i++) {
+							coords[i] = coords[i].add(motions[i]);
+						}
+					}
+					// calculate score
+					double score = 0.0;
+					for (int coordIndex=0;coordIndex<coordsArray.size();coordIndex++) {
+						Coordinates[] coords = coordsArray.get(coordIndex);
+						int start = 0;
+						int end = coords.length;
+						if (!wayList.get(coordIndex).isClosed()) {
+							start = 1;
+							end = end-1;
+						}
+						for (int i=start;i<end;i++) {
+							// yes I know that this -nearly- duplicates the code above
+							a = coords[(i - 1 + coords.length) % coords.length];
+							b = coords[i];
+							c = coords[(i + 1) % coords.length];
+							p = a.subtract(b);
+							q = c.subtract(b);
+							p = normalize(p, 1.0);
+							q = normalize(q, 1.0);
+							double dotp = filter((p.x * q.x + p.y * q.y), lowerThreshold, upperThreshold);
+
+							score = score + 2.0 * Math.min(Math.abs(dotp-1.0), Math.min(Math.abs(dotp), Math.abs(dotp+1.0)));
+						}
+					}
+					// Log.d("StorageDelegator", "orthogonalize way iteration/score " + iteration + "/" + score);
+					if (score < loopEpsilon) break; 
+				}
+
+				// prepare updated nodes for upload
+				int width = Application.mainActivity.getMap().getWidth();
+				int height = Application.mainActivity.getMap().getHeight();
+				BoundingBox box = Application.mainActivity.getMap().getViewBox();
+				for (int wayIndex=0;wayIndex<wayList.size();wayIndex++) {
+					List<Node> nodes = wayList.get(wayIndex).getNodes();
+					Coordinates[] coords = coordsArray.get(wayIndex);
+					for (int i = 0; i < nodes.size(); i++) { 
+						Node nd = nodes.get(i);
+						//	if (i == 0 || !nd.equals(firstNode)) {
+						nd.setLon(GeoMath.xToLonE7(width, box, coords[i].x));
+						nd.setLat(GeoMath.yToLatE7(height, width, box, coords[i].y));
+						apiStorage.insertElementSafe(nd);
+						nd.updateState(OsmElement.STATE_MODIFIED);
+						//	}
+					}
 				}
 			}
 			recordImagery();
@@ -699,8 +790,9 @@ public class StorageDelegator implements Serializable, Exportable {
 	 * @param node1
 	 * @param node2
 	 * @param createPolygons split in to two polygons 
+	 * @return null if split failed or wasn't possible, the two resulting ways otherwise
 	 */
-	public void splitAtNodes(Way way, Node node1, Node node2, boolean createPolygons) {
+	public Way[] splitAtNodes(Way way, Node node1, Node node2, boolean createPolygons) {
 		Log.d("StorageDelegator", "splitAtNodes way " + way.getOsmId() + " node1 " + node1.getOsmId() + " node2 " + node2.getOsmId());
 		// undo - old way is saved here, new way is saved at insert
 		dirty = true;
@@ -708,7 +800,7 @@ public class StorageDelegator implements Serializable, Exportable {
 		
 		List<Node> nodes = way.getNodes();
 		if (nodes.size() < 3) {
-			return;
+			return null;
 		}
 		
 		/* convention iterate over list, copy everything between first split node found and 2nd split node found
@@ -795,10 +887,15 @@ public class StorageDelegator implements Serializable, Exportable {
 				}
 			}
 			recordImagery();
+			Way[] result = new Way[2];
+			result[0] = way;
+			result[1] = newWay;
+			return result;
 		} catch (StorageException e) {
 			//TODO handle OOM
 			e.printStackTrace();
 		}
+		return null;
 	}
 	
 	/**
@@ -806,7 +903,7 @@ public class StorageDelegator implements Serializable, Exportable {
 	 * @param way
 	 * @param node
 	 */
-	public void splitAtNode(final Way way, final Node node) {
+	public Way splitAtNode(final Way way, final Node node) {
 		Log.d("StorageDelegator", "splitAtNode way " + way.getOsmId() + " node " + node.getOsmId());
 		// undo - old way is saved here, new way is saved at insert
 		dirty = true;
@@ -818,7 +915,7 @@ public class StorageDelegator implements Serializable, Exportable {
 		if (nodes.size() < 3 || (way.isEndNode(node) && (way.isClosed()?occurances==2:occurances==1))) { 
 			// protect against producing single node ways FIXME give feedback that this is not good
 			Log.d("StorageDelegator", "splitAtNode can't split " + nodes.size() + " node long way at this node");
-			return;
+			return null;
 		}
 		// we assume this node is only contained in the way once.
 		// else the user needs to split the remaining way again.
@@ -838,7 +935,7 @@ public class StorageDelegator implements Serializable, Exportable {
 		}
 		if (nodesForNewWay.size() <= 1) {
 			Log.d("StorageDelegator", "splitAtNode can't split, new way would have " + nodesForNewWay.size() + " node(s)");
-			return; // do not create 1-node way
+			return null; // do not create 1-node way
 		}
 		try {
 			way.updateState(OsmElement.STATE_MODIFIED);
@@ -911,9 +1008,11 @@ public class StorageDelegator implements Serializable, Exportable {
 				}
 			}
 			recordImagery();
+			return newWay;
 		} catch (StorageException e) {
 			//TODO handle OOM
 			e.printStackTrace();
+			return null;
 		}
 	}	
 
@@ -1000,13 +1099,14 @@ public class StorageDelegator implements Serializable, Exportable {
 			// Result: f3 f2 f1 (f0=)i0 i1 i2 i3   (f0 = 0th node of mergeFrom, i1 = 1st node of mergeInto)
 			atBeginning = true;
 			//check for direction dependent tags
-			Map<String, String> dirTags = mergeFrom.getDirectionDependentTags();
+			Map<String, String> dirTags = Reverse.getDirectionDependentTags(mergeFrom);
 			if (dirTags != null) {
-				mergeFrom.reverseDirectionDependentTags(dirTags, true);
+				Reverse.reverseDirectionDependentTags(mergeFrom,dirTags, true);
 			}
 			mergeOK = !mergeFrom.notReversable();
 			Collections.reverse(newNodes);
 			newNodes.remove(newNodes.size()-1); // remove "last" (originally first) node after reversing
+			reverseWayNodeTags(newNodes);
 		} else if (mergeInto.getLastNode().equals(mergeFrom.getFirstNode())) {
 			// Result: i0 i1 i2 i3(=f0) f1 f2 f3
 			atBeginning = false;
@@ -1019,12 +1119,13 @@ public class StorageDelegator implements Serializable, Exportable {
 			// Result: i0 i1 i2 i3(=f3) f2 f1 f0
 			atBeginning = false;
 			//check for direction dependent tags
-			Map<String, String> dirTags = mergeFrom.getDirectionDependentTags();
+			Map<String, String> dirTags = Reverse.getDirectionDependentTags(mergeFrom);
 			if (dirTags != null) {
-				mergeFrom.reverseDirectionDependentTags(dirTags, true);
+				Reverse.reverseDirectionDependentTags(mergeFrom, dirTags, true);
 			}
 			mergeOK = !mergeFrom.notReversable();
 			newNodes.remove(newNodes.size()-1); // remove last node before reversing
+			reverseWayNodeTags(newNodes);
 			Collections.reverse(newNodes);
 		} else {
 			throw new RuntimeException("attempted to merge non-mergeable nodes. this is a bug.");
@@ -1049,21 +1150,50 @@ public class StorageDelegator implements Serializable, Exportable {
 	}
 	
 	/**
+	 * reverse any direction dependent tags on the way nodes
+	 * @param nodes
+	 */
+	void reverseWayNodeTags(List<Node> nodes) {
+		for (Node n:nodes) {
+			Map<String,String> nodeDirTags = Reverse.getDirectionDependentTags(n);
+			if (nodeDirTags!=null) {
+				undo.save(n);
+				Reverse.reverseDirectionDependentTags(n,nodeDirTags, true);
+				n.updateState(OsmElement.STATE_MODIFIED);
+				try {
+					apiStorage.insertElementSafe(n);
+				} catch (StorageException e) {
+					//TODO handle OOM
+					e.printStackTrace();
+				}
+			}
+		}
+	}
+	
+	/**
 	 * return true if elements have different roles in the same relation
 	 * @param o1
 	 * @param o2
 	 * @return
 	 */
-	private boolean roleConflict(OsmElement o1, OsmElement o2) {
-		
+	private boolean roleConflict(OsmElement o1, OsmElement o2) {	
 		ArrayList<Relation> r1 = o1.getParentRelations() != null ? o1.getParentRelations() : new ArrayList<Relation>();
 		ArrayList<Relation> r2 = o2.getParentRelations() != null ? o2.getParentRelations() : new ArrayList<Relation>();
 		for (Relation r : r1) {
 			if (r2.contains(r)) {
 				RelationMember rm1 = r.getMember(o1);
 				RelationMember rm2 = r.getMember(o2);
-				if (!rm1.getRole().equals(rm2.getRole())) {
-					Log.d("StorageDelegator","role conflict between " + o1.getDescription() + " role " + rm1.getRole() + " and " + o2.getDescription() + " role " + rm2.getRole());
+				if (rm1 != null && rm2 != null) { // if either of these are null something is broken
+					String role1 = rm1.getRole();
+					String role2 = rm2.getRole();
+					if ((role1 != null && role2 == null) || (role1 == null && role2 != null) || (role1 != role2 && !role1.equals(role2))) {
+						Log.d(DEBUG_TAG,"role conflict between " + o1.getDescription() + " role " + role1 + " and " + o2.getDescription() + " role " + role2);
+						return true;
+					}
+				} else {
+					Log.d(DEBUG_TAG,"inconsistent relation membership in " + r.getOsmId() + " for " + o1.getOsmId() + " and " + o2.getOsmId());
+					ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
+					ACRA.getErrorReporter().handleException(null);
 					return true;
 				}
 			}
@@ -1157,7 +1287,6 @@ public class StorageDelegator implements Serializable, Exportable {
 		}
 	}
 	
-
 	/**
 	 * Reverses a way
 	 * @param way
@@ -1167,15 +1296,25 @@ public class StorageDelegator implements Serializable, Exportable {
 		dirty = true;
 		undo.save(way);
 		//check for direction dependent tags
-		Map<String, String> dirTags = way.getDirectionDependentTags();
+		Map<String, String> dirTags = Reverse.getDirectionDependentTags(way);
 		//TODO inform user about the tags
 		if (dirTags != null) {
-			way.reverseDirectionDependentTags(dirTags, false); // assume he only wants to change the oneway direction for now
+			Reverse.reverseDirectionDependentTags(way, dirTags, false); // assume he only wants to change the oneway direction for now
 		}
+		reverseWayNodeTags(way.getNodes());
 		way.reverse();
-		List<Relation>relations = way.getRelationsWithDirectionDependentRoles();
+		List<Relation>relations = Reverse.getRelationsWithDirectionDependentRoles(way);
 		if (relations != null) {
-			way.reverseRoleDirection(relations);
+			Reverse.reverseRoleDirection(way,relations);
+			for (Relation r:relations) {
+				r.updateState(OsmElement.STATE_MODIFIED);
+				try {
+					apiStorage.insertElementSafe(r);
+				} catch (StorageException e) {
+					// TODO handle OOM
+					e.printStackTrace();
+				}
+			}
 		}
 		way.updateState(OsmElement.STATE_MODIFIED);
 		try {
@@ -1208,8 +1347,7 @@ public class StorageDelegator implements Serializable, Exportable {
 		int deleted = 0;
 		try {
 			List<Way> ways = currentStorage.getWays(node);
-			for (int i = 0, size = ways.size(); i < size; ++i) {
-				Way way = ways.get(i);
+			for (Way way:ways) {
 				undo.save(way);
 				if (way.isClosed() && way.isEndNode(node) && way.getNodes().size() > 1) { // note protection against degenerate closed ways
 					way.removeNode(node);
@@ -1370,29 +1508,89 @@ public class StorageDelegator implements Serializable, Exportable {
 		Log.i("StorageDelegator", "... done");
 	}
 	
+	/**
+	 * add element to relation at a specific position
+	 * @param e
+	 * @param pos
+	 * @param role
+	 * @param rel
+	 */
 	public void addElementToRelation(final OsmElement e, final int pos, final String role, final Relation rel)
 	{
-		ArrayList<Relation> relations = e.getParentRelations();
-		if (relations == null || !relations.contains(rel)) {
-			dirty = true;
-			undo.save(rel);
-			undo.save(e);
+		dirty = true;
+		undo.save(rel);
+		undo.save(e);
 
-			RelationMember newMember = new RelationMember(role, e);
-			rel.addMember(pos, newMember);
-			e.addParentRelation(rel);
+		RelationMember newMember = new RelationMember(role, e);
+		rel.addMember(pos, newMember);
+		e.addParentRelation(rel);
 
-			rel.updateState(OsmElement.STATE_MODIFIED);
-			try {
-				apiStorage.insertElementSafe(rel);
-				recordImagery();
-			} catch (StorageException sex) {
-				//TODO handle OOM
-				sex.printStackTrace();
-			}
+		rel.updateState(OsmElement.STATE_MODIFIED);
+		try {
+			apiStorage.insertElementSafe(rel);
+			recordImagery();
+		} catch (StorageException sex) {
+			//TODO handle OOM
+			sex.printStackTrace();
 		}
-		else {
-			Log.w("StorageDelegator", "element #" + e.getOsmId() + " already in relation #" + rel.getOsmId());
+	}
+	
+	/**
+	 * add element to relation at end
+	 * @param e
+	 * @param role
+	 * @param rel
+	 */
+	public void addElementToRelation(final OsmElement e, final String role, final Relation rel)
+	{
+
+		dirty = true;
+		undo.save(rel);
+		undo.save(e);
+
+		RelationMember newMember = new RelationMember(role, e);
+		rel.addMember(newMember);
+		e.addParentRelation(rel);
+
+		rel.updateState(OsmElement.STATE_MODIFIED);
+		try {
+			apiStorage.insertElementSafe(rel);
+			recordImagery();
+		} catch (StorageException sex) {
+			//TODO handle OOM
+			sex.printStackTrace();
+		}
+	}
+	
+	/**
+	 * add element to relation at end
+	 * @param e
+	 * @param role
+	 * @param rel
+	 */
+	public void addElementToRelation(final RelationMember newMember, final Relation rel)
+	{
+		OsmElement e = newMember.getElement();
+		if (e == null) {
+			Log.e(DEBUG_TAG, "addElementToRelation element not found");
+			return;
+		}
+	
+		dirty = true;
+		undo.save(rel);
+
+		undo.save(e);
+
+		rel.addMember(newMember);
+		e.addParentRelation(rel);
+
+		rel.updateState(OsmElement.STATE_MODIFIED);
+		try {
+			apiStorage.insertElementSafe(rel);
+			recordImagery();
+		} catch (StorageException sex) {
+			//TODO handle OOM
+			sex.printStackTrace();
 		}
 	}
 	
@@ -1460,7 +1658,7 @@ public class StorageDelegator implements Serializable, Exportable {
 	public void updateParentRelations(final OsmElement e,
 			final HashMap<Long, String> parents) {
 		Log.d(DEBUG_TAG,"updateParentRelations new parents size " + parents.size());
-		ArrayList<Relation> origParents = e.getParentRelations() != null ? (ArrayList<Relation>) e.getParentRelations().clone() : new ArrayList<Relation>();
+		ArrayList<Relation> origParents = e.getParentRelations() != null ? new ArrayList<Relation>(e.getParentRelations()) : new ArrayList<Relation>();
 		
 		for (Relation o: origParents) { // find changes to existing memberships
 			if (!parents.containsKey(Long.valueOf(o.getOsmId()))) {
@@ -1494,40 +1692,67 @@ public class StorageDelegator implements Serializable, Exportable {
 	 * @param members  	new list of members
 	 */
 	public void updateRelation(Relation r, ArrayList<RelationMemberDescription> members) {
-	
-		ArrayList<RelationMember> origMembers = (ArrayList<RelationMember>) (((ArrayList<RelationMember>) r.getMembers()).clone());
-		LinkedHashMap<String,RelationMemberDescription> membersHash = new LinkedHashMap<String,RelationMemberDescription>();
-		for (RelationMemberDescription rmd: members) {
-			membersHash.put(rmd.getType()+"-"+rmd.getRef(),rmd);
+		
+		dirty = true;
+		undo.save(r);
+		boolean changed = false;
+		ArrayList<RelationMember> origMembers = new ArrayList<RelationMember>(r.getMembers());
+		LinkedHashMap<String,RelationMember> membersHash = new LinkedHashMap<String,RelationMember>();
+		for (RelationMember rm: r.getMembers()) {
+			membersHash.put(rm.getType()+"-"+rm.getRef(),rm);
 		}
-		for (RelationMember o: origMembers) { // find changes to existing members
-			OsmElement e = o.getElement();
-			if (e != null) { // is downloaded
-				String key = e.getName()+"-"+e.getOsmId();
-				if (!membersHash.containsKey(key)) {
-					removeElementFromRelation(e, r); // saves undo state
-					continue;
+		ArrayList<RelationMember> newMembers = new ArrayList<RelationMember>(); 
+		for (int i = 0; i < members.size(); i++) {
+			RelationMemberDescription rmd = members.get(i);
+			String key = rmd.getType()+"-"+rmd.getRef();
+			OsmElement e = rmd.getElement();
+			RelationMember rm = membersHash.get(key);
+			if (rm != null) {
+				int origPos = origMembers.indexOf(rm);
+				String newRole = rmd.getRole();
+				if (!rm.getRole().equals(newRole)) {
+					changed = true;
+					rm = new RelationMember(rm); // allocate new element
+					rm.setRole(newRole);
 				}
-				String newRole = membersHash.get(key).getRole();
-				if (!o.getRole().equals(newRole)) {
-					setRole(e, newRole, r);
+				newMembers.add(rm); // existing member simply add to list
+				if (origPos != i) {
+					changed = true;
 				}
-			} else {
-				String key = o.getType()+"-"+o.getRef();
-				if (!membersHash.containsKey(key)) {
-					removeElementFromRelation(o.getType(), o.getRef(), r); // saves undo state
-					continue;
+				membersHash.remove(key);
+			} else { // new member
+				changed = true;
+				RelationMember newMember = null;
+				if (e != null) {  // downloaded
+					newMember = new RelationMember(rmd.getRole(), e);
+				} else {
+					newMember = new RelationMember(rmd.getType(), rmd.getRef(), rmd.getRole());
 				}
-				String newRole = membersHash.get(key).getRole();
-				if (!o.getRole().equals(newRole)) {
-					setRole(o.getType(), o.getRef(), newRole, r);
-				}
+				newMembers.add(newMember);
 			}
 		}
-		// TODO resorting and adding members
-		// get copy of current state
-		// origMembers = (ArrayList<RelationMember>) (((ArrayList<RelationMember>) r.getMembers()).clone());
+		for (RelationMember rm: membersHash.values()) {
+			changed = true;
+			OsmElement e = rm.getElement();
+			if (e != null) {
+				undo.save(e);
+				e.removeParentRelation(r);
+			} 
+		}
 		
+		if (changed) {
+			r.replaceMembers(newMembers);
+			r.updateState(OsmElement.STATE_MODIFIED);
+			try {
+				apiStorage.insertElementSafe(r);
+				recordImagery();
+			} catch (StorageException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		} else {
+			// FIXME remove relation from undo storage
+		}
 	}
 
 	/**
@@ -1538,6 +1763,7 @@ public class StorageDelegator implements Serializable, Exportable {
 	public void addMembersToRelation(Relation relation,	ArrayList<OsmElement> members) {
 		dirty = true;
 		for (OsmElement e:members) {
+			undo.save(e);
 			RelationMember rm = new RelationMember("", e);
 			relation.addMember(rm);
 			e.addParentRelation(relation);
@@ -1769,16 +1995,22 @@ public class StorageDelegator implements Serializable, Exportable {
 
 		if (readingLock.tryLock()) {
 			// TODO this doesn't really help with error conditions need to throw exception
-			if (savingHelper.save(FILENAME, this, true)) { 
+			if (savingHelper.save(ctx, FILENAME, this, true)) { 
 				dirty = false;
 			} else {
 				// this is essentially catastrophic and can only happen if something went really wrong
 				// running out of memory or disk, or HW failure
 				if (ctx != null) {
-					Toast.makeText(ctx, R.string.toast_statesave_failed, Toast.LENGTH_LONG).show();
+					try {
+						Toast.makeText(ctx, R.string.toast_statesave_failed, Toast.LENGTH_LONG).show();
+					} catch (Exception ignored) {
+						Log.e(DEBUG_TAG,"Emergency toast failed with " + ignored.getMessage());
+					} catch (Error ignored) {
+						Log.e(DEBUG_TAG,"Emergency toast failed with " + ignored.getMessage());
+					}
 				}
-				SavingHelper.asyncExport(ctx, this); // ctx == null is checked
-				Log.d("StorageDelegator", "save of state file failed" );
+				SavingHelper.asyncExport(ctx, this); // ctx == null is checked in method
+				Log.d("StorageDelegator", "save of state file failed, written emergency change file" );
 			}
 			readingLock.unlock();
 		} else {
@@ -1803,7 +2035,7 @@ public class StorageDelegator implements Serializable, Exportable {
 	public boolean readFromFile(String filename) {
 		try{
 			lock();
-			StorageDelegator newDelegator = savingHelper.load(filename, true); 
+			StorageDelegator newDelegator = savingHelper.load(Application.getCurrentApplication(),filename, true); 
 
 			if (newDelegator != null) {
 				Log.d("StorageDelegator", "read saved state");
@@ -1859,7 +2091,7 @@ public class StorageDelegator implements Serializable, Exportable {
 	 * @param server Server to upload changes to.
 	 * @param comment Changeset comment.
 	 * @param source 
-	 * @param closeChangeset TODO
+	 * @param closeChangeset
 	 * @throws MalformedURLException
 	 * @throws ProtocolException
 	 * @throws OsmServerException
@@ -1867,20 +2099,47 @@ public class StorageDelegator implements Serializable, Exportable {
 	 */
 	public synchronized void uploadToServer(final Server server, final String comment, String source, boolean closeChangeset) throws MalformedURLException, ProtocolException,
 			OsmServerException, IOException {
+		
+		//check if we have any created elements that will change their id
+		boolean rehash = false;
+		for (Node n:apiStorage.getNodes()) {
+			if (OsmElement.STATE_CREATED == n.getState()) {
+				rehash = true;
+				break;
+			}
+		}
+		if (!rehash) {
+			for (Way w:apiStorage.getWays()) {
+				if (OsmElement.STATE_CREATED == w.getState()) {
+					rehash = true;
+					break;
+				}
+			}
+			if (!rehash) {
+				for (Relation r:apiStorage.getRelations()) {
+					if (OsmElement.STATE_CREATED == r.getState()) {
+						rehash = true;
+						break;
+					}
+				}
+			}
+		}
+		
+		
 		dirty = true; // storages will get modified as data is uploaded, these changes need to be saved to file
 		// upload methods set dirty flag too, in case the file is saved during an upload
 		server.openChangeset(comment, source, Util.listToOsmList(imagery));
-		Log.d("StorageDelegator","Uploading Nodes");
+		Log.d(DEBUG_TAG,"Uploading Nodes");
 		uploadCreatedOrModifiedElements(server, apiStorage.getNodes());
-		Log.d("StorageDelegator","Uploading Ways");
+		Log.d(DEBUG_TAG,"Uploading Ways");
 		uploadCreatedOrModifiedElements(server, apiStorage.getWays());
-		Log.d("StorageDelegator","Uploading Relations");
+		Log.d(DEBUG_TAG,"Uploading Relations");
 		uploadCreatedOrModifiedElements(server, apiStorage.getRelations());
-		Log.d("StorageDelegator","Deleting Relations");
+		Log.d(DEBUG_TAG,"Deleting Relations");
 		uploadDeletedElements(server, apiStorage.getRelations());
-		Log.d("StorageDelegator","Deleting Ways");
+		Log.d(DEBUG_TAG,"Deleting Ways");
 		uploadDeletedElements(server, apiStorage.getWays());
-		Log.d("StorageDelegator","Deleting Nodes");
+		Log.d(DEBUG_TAG,"Deleting Nodes");
 		uploadDeletedElements(server, apiStorage.getNodes());
 		
 		if (closeChangeset) {
@@ -1893,9 +2152,20 @@ public class StorageDelegator implements Serializable, Exportable {
 		imagery = new ArrayList<String>();
 		setImageryRecorded(false);
 		
+		if (rehash) {
+			// ids have changed, need to rehash
+			Log.d(DEBUG_TAG, "rehash currentStorage");
+			currentStorage.rehash();
+		}
+		
 		// sanity check
 		if (!apiStorage.isEmpty()) {
-			Log.d("StorageDelegator", "apiStorage not empty");
+			Log.d(DEBUG_TAG, "apiStorage not empty");
+			if (rehash) {
+				// ids may have changed, need to rehash
+				Log.d(DEBUG_TAG, "rehash apiStorage");
+				apiStorage.rehash();
+			}
 		}
 	}
 
@@ -1926,11 +2196,11 @@ public class StorageDelegator implements Serializable, Exportable {
 			case OsmElement.STATE_CREATED:
 				long osmId = server.createElement(element);
 				if (osmId > 0) {
-					element.setOsmId(osmId);
 					if (!apiStorage.removeElement(element)) {
 						Log.e(DEBUG_TAG, "New " + element + " was already removed from local storage!");
 					}
 					Log.w(DEBUG_TAG, "New " + element + " added to API");
+					element.setOsmId(osmId); // id change requires rehash so that removing works, remove first then set id
 					element.setState(OsmElement.STATE_UNCHANGED);
 				} else {
 					Log.d(DEBUG_TAG, "Didn't get new ID: " + osmId);
@@ -2090,219 +2360,207 @@ public class StorageDelegator implements Serializable, Exportable {
 	 */
 	synchronized public boolean mergeData(Storage storage, PostMergeHandler postMerge) {
 		Log.d("StorageDelegator","mergeData called");
-		// make temp copy of current storage
-		Storage temp = new Storage();
-		boolean first = true;
-		for (BoundingBox bb:currentStorage.getBoundingBoxes()) {
-			if (first) {
-				temp.setBoundingBox(bb);
-				first = false;
-			} else {
-				temp.addBoundingBox(bb);
-			}
-		}
-		temp.getNodes().addAll(currentStorage.getNodes());
-		temp.getWays().addAll(currentStorage.getWays());
-		temp.getRelations().addAll(currentStorage.getRelations());
+		// make temp copy of current storage (we may have to abort
+		Storage temp = new Storage(currentStorage);
+
+		// retrieve the maps
+		LongOsmElementMap<Node> nodeIndex = temp.getNodeIndex();
+		LongOsmElementMap<Way> wayIndex = temp.getWayIndex();
+		LongOsmElementMap<Relation> relationIndex = temp.getRelationIndex();
 		
-		// build indices for the existing data
-		HashMap<Long,Node> nodeIndex = new HashMap<Long, Node>();
-		for (Node n:temp.getNodes()) {
-			nodeIndex.put(n.getOsmId(),n);
-		}
-		HashMap<Long,Way> wayIndex = new HashMap<Long, Way>();
-		for (Way w:temp.getWays()) {
-			wayIndex.put(w.getOsmId(),w);
-		}
-		HashMap<Long,Relation> relationIndex = new HashMap<Long, Relation>();
-		for (Relation r:temp.getRelations()) {
-			relationIndex.put(r.getOsmId(),r);
-		}
+		Log.d("StorageDelegator","mergeData finished init");
 		
-		// add nodes
-		for (Node n:storage.getNodes()) {
-			Node apiNode = apiStorage.getNode(n.getOsmId()); // can contain deleted elements
-			if (!nodeIndex.containsKey(n.getOsmId()) &&  apiNode == null) { // new node no problem
-				temp.getNodes().add(n);
-				nodeIndex.put(n.getOsmId(),n);
-				if (postMerge != null) {
-					postMerge.handler(n);
-				}
-			} else {
-				if (apiNode != null && apiNode.getState() == OsmElement.STATE_DELETED) {
-					if (apiNode.getOsmVersion() >= n.getOsmVersion())
+		try {
+			// add nodes
+			for (Node n:storage.getNodes()) {
+				Node apiNode = apiStorage.getNode(n.getOsmId()); // can contain deleted elements
+				if (!nodeIndex.containsKey(n.getOsmId()) &&  apiNode == null) { // new node no problem
+					temp.insertNodeUnsafe(n);
+					if (postMerge != null) {
+						postMerge.handler(n);
+					}
+				} else {
+					if (apiNode != null && apiNode.getState() == OsmElement.STATE_DELETED) {
+						if (apiNode.getOsmVersion() >= n.getOsmVersion())
+							continue; // can use node we already have
+						else
+							return false; // can't resolve conflicts, upload first
+					}
+					Node existingNode = nodeIndex.get(n.getOsmId());
+					if (existingNode.getOsmVersion() >= n.getOsmVersion()) // larger just to be on the safe side
 						continue; // can use node we already have
-					else
-						return false; // can't resolve conflicts, upload first
-				}
-				Node existingNode = temp.getNode(n.getOsmId());
-				if (existingNode.getOsmVersion() >= n.getOsmVersion()) // larger just to be on the safe side
-					continue; // can use node we already have
-				else {
-					if (existingNode.isUnchanged()) {
-						temp.getNodes().remove(existingNode);
-						temp.getNodes().add(n);
-						nodeIndex.put(n.getOsmId(),n); // overwrite existing entry in index
-						if (postMerge != null) {
-							postMerge.handler(n);
-						}
-					} else
-						return false; // can't resolve conflicts, upload first
-				}
-			}
-		}
-		
-		// add ways
-		for (Way w:storage.getWays()) {
-			Way apiWay = apiStorage.getWay(w.getOsmId()); // can contain deleted elements
-			if (!wayIndex.containsKey(w.getOsmId()) && apiWay == null) { // new way no problem
-				temp.getWays().add(w);
-				wayIndex.put(w.getOsmId(),w);
-				if (postMerge != null) {
-					postMerge.handler(w);
-				}
-			} else {
-				if (apiWay != null && apiWay.getState() == OsmElement.STATE_DELETED) {
-					if (apiWay.getOsmVersion() >= w.getOsmVersion())
-						continue; // can use way we already have
-					else
-						return false; // can't resolve conflicts, upload first
-				}
-				Way existingWay = temp.getWay(w.getOsmId());
-				if (existingWay != null) {
-					if (existingWay.getOsmVersion() >= w.getOsmVersion()) {// larger just to be on the safe side  
-						continue; // can use way we already have
-					} else {
-						if (existingWay.isUnchanged()) {
-							temp.getWays().remove(existingWay);
-							temp.getWays().add(w);
-							wayIndex.put(w.getOsmId(),w); // overwrite existing entry in index
+					else {
+						if (existingNode.isUnchanged()) {
+							temp.insertNodeUnsafe(n);
 							if (postMerge != null) {
-								postMerge.handler(w);
+								postMerge.handler(n);
 							}
 						} else
 							return false; // can't resolve conflicts, upload first
 					}
-				} else {
-					// this shouldn't be able to happen
-					Log.e("StorageDelegator","mergeData null existing way " + w.getOsmId());
-					ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
-					ACRA.getErrorReporter().handleException(null);
-					return false;
 				}
 			}
-		}
-		
-		// fix up way nodes
-		// all nodes should be in storage now, however new ways will have references to copies not in storage
-		for (Way w:temp.getWays()) {
-			List<Node> nodes = w.getNodes();
-			for (int i=0;i<nodes.size();i++) {
-				Node n = nodeIndex.get(nodes.get(i).getOsmId());
-				if (n != null) {
-					nodes.set(i,n);
+			
+			Log.d("StorageDelegator","mergeData added nodes");
+
+			// add ways
+			for (Way w:storage.getWays()) {
+				Way apiWay = apiStorage.getWay(w.getOsmId()); // can contain deleted elements
+				if (!wayIndex.containsKey(w.getOsmId()) && apiWay == null) { // new way no problem
+					temp.insertWayUnsafe(w);
+					if (postMerge != null) {
+						postMerge.handler(w);
+					}
 				} else {
-					// node might have been deleted, aka somebody deleted nodes outside of the down loaded data bounding box
-					Log.e("StorageDelegator","mergeData null way node");
-					ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
-					ACRA.getErrorReporter().handleException(null);
-					return false;
+					if (apiWay != null && apiWay.getState() == OsmElement.STATE_DELETED) {
+						if (apiWay.getOsmVersion() >= w.getOsmVersion())
+							continue; // can use way we already have
+						else
+							return false; // can't resolve conflicts, upload first
+					}
+					Way existingWay = wayIndex.get(w.getOsmId());
+					if (existingWay != null) {
+						if (existingWay.getOsmVersion() >= w.getOsmVersion()) {// larger just to be on the safe side  
+							continue; // can use way we already have
+						} else {
+							if (existingWay.isUnchanged()) {
+								temp.insertWayUnsafe(w);
+								if (postMerge != null) {
+									postMerge.handler(w);
+								}
+							} else
+								return false; // can't resolve conflicts, upload first
+						}
+					} else {
+						// this shouldn't be able to happen
+						Log.e("StorageDelegator","mergeData null existing way " + w.getOsmId());
+						ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
+						ACRA.getErrorReporter().handleException(null);
+						return false;
+					}
 				}
 			}
-		}
-				
-		// add relations
-		for (Relation r:storage.getRelations()) {
-			Relation apiRelation = apiStorage.getRelation(r.getOsmId()); // can contain deleted elements
-			if (!relationIndex.containsKey(r.getOsmId()) && apiRelation == null) { // new relation no problem
-				temp.getRelations().add(r);
-				relationIndex.put(r.getOsmId(),r);
-				if (postMerge != null) {
-					postMerge.handler(r);
+			
+			Log.d("StorageDelegator","mergeData added ways");
+
+			// fix up way nodes
+			// all nodes should be in storage now, however new ways will have references to copies not in storage
+			for (Way w:wayIndex) {
+				List<Node> nodes = w.getNodes();
+				for (int i=0;i<nodes.size();i++) {
+					Node n = nodeIndex.get(nodes.get(i).getOsmId());
+					if (n != null) {
+						nodes.set(i,n);
+					} else {
+						// node might have been deleted, aka somebody deleted nodes outside of the down loaded data bounding box
+						Log.e("StorageDelegator","mergeData null way node for way " + w.getOsmId() + " node " + nodes.get(i).getOsmId());
+						ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
+						ACRA.getErrorReporter().handleException(null);
+						return false;
+					}
 				}
-			} else {
-				if (apiRelation != null && apiRelation.getState() == OsmElement.STATE_DELETED) {
-					if (apiRelation.getOsmVersion() >= r.getOsmVersion())
+			}
+			
+			Log.d("StorageDelegator","mergeData fixup way nodes nodes");
+
+			// add relations
+			for (Relation r:storage.getRelations()) {
+				Relation apiRelation = apiStorage.getRelation(r.getOsmId()); // can contain deleted elements
+				if (!relationIndex.containsKey(r.getOsmId()) && apiRelation == null) { // new relation no problem
+					temp.insertRelationUnsafe(r);
+					if (postMerge != null) {
+						postMerge.handler(r);
+					}
+				} else {
+					if (apiRelation != null && apiRelation.getState() == OsmElement.STATE_DELETED) {
+						if (apiRelation.getOsmVersion() >= r.getOsmVersion())
+							continue; // can use relation we already have
+						else
+							return false; // can't resolve conflicts, upload first
+					}
+					Relation existingRelation = relationIndex.get(r.getOsmId());
+					if (existingRelation.getOsmVersion() >= r.getOsmVersion()) { // larger just to be on the safe side
 						continue; // can use relation we already have
-					else
-						return false; // can't resolve conflicts, upload first
-				}
-				Relation existingRelation = temp.getRelation(r.getOsmId());
-				if (existingRelation.getOsmVersion() >= r.getOsmVersion()) { // larger just to be on the safe side
-					continue; // can use relation we already have
-				}
-				else {
-					if (existingRelation.isUnchanged()) {
-						temp.getRelations().remove(existingRelation);
-						temp.getRelations().add(r);
-						relationIndex.put(r.getOsmId(),r); // overwrite existing entry in index
-						if (postMerge != null) {
-							postMerge.handler(r);
-						}
-					} else
-						return false; // can't resolve conflicts, upload first
+					}
+					else {
+						if (existingRelation.isUnchanged()) {
+							temp.insertRelationUnsafe(r);
+							if (postMerge != null) {
+								postMerge.handler(r);
+							}
+						} else
+							return false; // can't resolve conflicts, upload first
+					}
 				}
 			}
-		}
-		
-		// fixup relation back links and memberships 
-		for (Relation r:temp.getRelations()) {
-			for (RelationMember rm:r.getMembers()) {
-				if (rm.getType().equals(Node.NAME)) {
-					if (nodeIndex.containsKey(rm.getRef())) { // if node is downloaded always re-set it
-						Node n = nodeIndex.get(rm.getRef());
-						rm.setElement(n);
-						if (n.hasParentRelation(r.getOsmId())) {
-							n.removeParentRelation(r.getOsmId()); // this removes based on id
-						}							   			  // net effect is to remove the old rel
-						n.addParentRelation(r);		   			  // and add the updated one
-					} else { // check if deleted
-						Node apiNode = apiStorage.getNode(rm.getRef());
-						if (apiNode != null && apiNode.getState() == OsmElement.STATE_DELETED) {
-							Log.e("StorageDelegator","mergeData deleted node in downloaded relation");
-							ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
-							ACRA.getErrorReporter().handleException(null);
-							return false; // can't resolve conflicts, upload first
+
+			Log.d("StorageDelegator","mergeData added relations");
+			
+			// fixup relation back links and memberships 
+			for (Relation r:temp.getRelations()) {
+				for (RelationMember rm:r.getMembers()) {
+					if (rm.getType().equals(Node.NAME)) {
+						if (nodeIndex.containsKey(rm.getRef())) { // if node is downloaded always re-set it
+							Node n = nodeIndex.get(rm.getRef());
+							rm.setElement(n);
+							if (n.hasParentRelation(r.getOsmId())) {
+								n.removeParentRelation(r.getOsmId()); // this removes based on id
+							}							   			  // net effect is to remove the old rel
+							n.addParentRelation(r);		   			  // and add the updated one
+						} else { // check if deleted
+							Node apiNode = apiStorage.getNode(rm.getRef());
+							if (apiNode != null && apiNode.getState() == OsmElement.STATE_DELETED) {
+								Log.e("StorageDelegator","mergeData deleted node in downloaded relation " + r.getOsmId());
+								ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
+								ACRA.getErrorReporter().handleException(null);
+								return false; // can't resolve conflicts, upload first
+							}
 						}
-					}
-				} else if (rm.getType().equals(Way.NAME)) { // same logic as for nodes
-					if (wayIndex.containsKey(rm.getRef())) {
-						Way w = wayIndex.get(rm.getRef());
-						rm.setElement(w);
-						if (w.hasParentRelation(r.getOsmId())) {
-							w.removeParentRelation(r.getOsmId());
+					} else if (rm.getType().equals(Way.NAME)) { // same logic as for nodes
+						if (wayIndex.containsKey(rm.getRef())) {
+							Way w = wayIndex.get(rm.getRef());
+							rm.setElement(w);
+							if (w.hasParentRelation(r.getOsmId())) {
+								w.removeParentRelation(r.getOsmId());
+							}
+							w.addParentRelation(r);
+						} else { // check if deleted
+							Way apiWay = apiStorage.getWay(rm.getRef());
+							if (apiWay != null && apiWay.getState() == OsmElement.STATE_DELETED) {
+								Log.e("StorageDelegator","mergeData deleted way in downloaded relation");
+								ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
+								ACRA.getErrorReporter().handleException(null);
+								return false; // can't resolve conflicts, upload first
+							}
 						}
-						w.addParentRelation(r);
-					} else { // check if deleted
-						Way apiWay = apiStorage.getWay(rm.getRef());
-						if (apiWay != null && apiWay.getState() == OsmElement.STATE_DELETED) {
-							Log.e("StorageDelegator","mergeData deleted way in downloaded relation");
-							ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
-							ACRA.getErrorReporter().handleException(null);
-							return false; // can't resolve conflicts, upload first
-						}
-					}
-				} else if (rm.getType().equals(Relation.NAME)) { // same logic as for nodes
-					if (relationIndex.containsKey(rm.getRef())) {
-						Relation r2 = relationIndex.get(rm.getRef());
-						rm.setElement(r2);
-						if (r2.hasParentRelation(r.getOsmId())) {
-							r2.removeParentRelation(r.getOsmId());
-						}
-						r2.addParentRelation(r);
-					} else { // check if deleted
-						Relation apiRel = apiStorage.getRelation(rm.getRef());
-						if (apiRel != null && apiRel.getState() == OsmElement.STATE_DELETED) {
-							Log.e("StorageDelegator","mergeData deleted relation in downloaded relation");
-							ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
-							ACRA.getErrorReporter().handleException(null);
-							return false; // can't resolve conflicts, upload first
+					} else if (rm.getType().equals(Relation.NAME)) { // same logic as for nodes
+						if (relationIndex.containsKey(rm.getRef())) {
+							Relation r2 = relationIndex.get(rm.getRef());
+							rm.setElement(r2);
+							if (r2.hasParentRelation(r.getOsmId())) {
+								r2.removeParentRelation(r.getOsmId());
+							}
+							r2.addParentRelation(r);
+						} else { // check if deleted
+							Relation apiRel = apiStorage.getRelation(rm.getRef());
+							if (apiRel != null && apiRel.getState() == OsmElement.STATE_DELETED) {
+								Log.e("StorageDelegator","mergeData deleted relation in downloaded relation");
+								ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
+								ACRA.getErrorReporter().handleException(null);
+								return false; // can't resolve conflicts, upload first
+							}
 						}
 					}
 				}
 			}
+			
+			Log.d("StorageDelegator","mergeData fixuped relations");
+			
+		} catch (StorageException sex) {
+			// ran of memory
+			return false;
 		}
-		
+
 		currentStorage = temp;
 		undo.setCurrentStorage(temp);
 		return true; // Success

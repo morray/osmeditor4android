@@ -9,11 +9,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import android.content.Context;
 import android.util.Log;
 import android.widget.Toast;
-import de.blau.android.Application;
 import de.blau.android.R;
-import de.blau.android.exception.OsmException;
 import de.blau.android.osm.BoundingBox;
-import de.blau.android.osm.StorageDelegator;
 import de.blau.android.util.SavingHelper;
 import de.blau.android.util.rtree.BoundedObject;
 import de.blau.android.util.rtree.RTree;
@@ -46,7 +43,7 @@ public class TaskStorage implements Serializable {
 	}
 	
 	public synchronized void reset() {
-		tasks = new RTree(2,100);
+		tasks = new RTree(30,100);
 		boxes = new RTree(2,20);
 		dirty = true;
 	}
@@ -128,19 +125,13 @@ public class TaskStorage implements Serializable {
 	 * @throws IOException
 	 */
 	public synchronized void writeToFile(Context ctx) throws IOException { 
-		if (isEmpty()) {
-			// don't write empty state files FIXME if the state file is empty on purpose we -should- write it
-			Log.i(DEBUG_TAG, "storage empty, skipping save");
-			return;
-		}
 		if (!dirty) {
 			Log.i(DEBUG_TAG, "storage not dirty, skipping save");
 			return;
 		}
-
 		if (readingLock.tryLock()) {
 			// TODO this doesn't really help with error conditions need to throw exception
-			if (savingHelper.save(FILENAME, this, true)) { 
+			if (savingHelper.save(ctx, FILENAME, this, true)) { 
 				dirty = false;
 			} else {
 				// this is essentially catastrophic and can only happen if something went really wrong
@@ -159,10 +150,10 @@ public class TaskStorage implements Serializable {
 	 * Loads the storage data from the default storage file
 	 * NOTE: lock is acquired in logic before this is called
 	 */
-	public synchronized boolean readFromFile() {
+	public synchronized boolean readFromFile(Context context) {
 		try{
 			readingLock.lock();
-			TaskStorage newStorage = savingHelper.load(FILENAME, true); 
+			TaskStorage newStorage = savingHelper.load(context, FILENAME, true); 
 
 			if (newStorage != null) {
 				Log.d(DEBUG_TAG, "read saved state");

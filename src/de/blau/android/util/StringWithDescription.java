@@ -1,6 +1,10 @@
 package de.blau.android.util;
 
 import java.io.Serializable;
+import java.text.Collator;
+import java.util.Comparator;
+
+import de.blau.android.presets.ValueWithCount;
 
 public class StringWithDescription implements Comparable<StringWithDescription>, Serializable {
 	private static final long serialVersionUID = 1L;
@@ -16,6 +20,23 @@ public class StringWithDescription implements Comparable<StringWithDescription>,
 		this.value = value;
 		this.description = description;
 	}
+	
+	public StringWithDescription(Object o) {
+		if (o instanceof ValueWithCount) {
+			value = ((ValueWithCount)o).getValue();
+			description = ((ValueWithCount)o).getDescription();
+		} else if (o instanceof StringWithDescription) {
+			value = ((StringWithDescription)o).getValue();
+			description = ((StringWithDescription)o).getDescription();
+		} else if (o instanceof String) {
+			value = (String)o;
+			description = value;
+		} else {
+			value = "";
+			description=value;
+		}
+	}
+	
 	/**
 	 * @return the value
 	 */
@@ -32,7 +53,7 @@ public class StringWithDescription implements Comparable<StringWithDescription>,
 
 	@Override
 	public String toString() {
-		return value + (description != null ? " - " + description:"");
+		return value + (description != null ? (value == null || "".equals(value) ? "" : " - ") + description:"");
 	}
 
 	@Override
@@ -62,4 +83,28 @@ public class StringWithDescription implements Comparable<StringWithDescription>,
 		result = 37 * result + (description == null ? 0 : description.hashCode());
 		return result;
 	}
+	
+	/**
+	 * 
+	 * @author simon
+	 *
+	 */
+	public static class LocaleComparator implements Comparator<StringWithDescription> {
+
+		Collator defaultLocaleCollator = Collator.getInstance();
+		
+		@Override
+		public int compare(StringWithDescription lhs, StringWithDescription rhs) {
+			String lhsDescription = lhs.getDescription();
+			if (lhsDescription == null || "".equals(lhsDescription)) {
+				lhsDescription = lhs.getValue();
+			}
+			String rhsDescription = rhs.getDescription();
+			if (rhsDescription == null || "".equals(rhsDescription)) {
+				rhsDescription = rhs.getValue();
+			}
+			return defaultLocaleCollator.compare(lhsDescription,rhsDescription);
+		}		
+	}
 }
+	

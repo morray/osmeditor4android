@@ -9,30 +9,27 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map.Entry;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.acra.ACRA;
-import org.apache.http.HttpStatus;
 import org.xml.sax.SAXException;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -41,36 +38,36 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.AsyncTask;
-import android.os.Environment;
 import android.util.Log;
-import android.view.ContextThemeWrapper;
 import android.view.View;
 import android.widget.Toast;
+import de.blau.android.dialogs.ErrorAlert;
+import de.blau.android.dialogs.InvalidLogin;
+import de.blau.android.dialogs.Progress;
+import de.blau.android.dialogs.UploadConflict;
 import de.blau.android.exception.OsmException;
 import de.blau.android.exception.OsmIllegalOperationException;
 import de.blau.android.exception.OsmServerException;
 import de.blau.android.exception.StorageException;
 import de.blau.android.osm.BoundingBox;
-import de.blau.android.osm.Capabilities;
 import de.blau.android.osm.Node;
 import de.blau.android.osm.OsmElement;
 import de.blau.android.osm.OsmParser;
+import de.blau.android.osm.PostMergeHandler;
 import de.blau.android.osm.Relation;
 import de.blau.android.osm.RelationMember;
 import de.blau.android.osm.RelationMemberDescription;
 import de.blau.android.osm.Server;
 import de.blau.android.osm.Server.UserDetails;
 import de.blau.android.osm.Server.Visibility;
-import de.blau.android.osm.Storage;
 import de.blau.android.osm.StorageDelegator;
 import de.blau.android.osm.Tags;
-import de.blau.android.osm.PostMergeHandler;
 import de.blau.android.osm.Track;
 import de.blau.android.osm.UndoStorage;
 import de.blau.android.osm.Way;
 import de.blau.android.prefs.Preferences;
-import de.blau.android.resources.Profile;
-import de.blau.android.services.TrackerService;
+import de.blau.android.resources.DataStyle;
+import de.blau.android.resources.TileLayerServer;
 import de.blau.android.tasks.Note;
 import de.blau.android.tasks.Task;
 import de.blau.android.util.EditState;
@@ -78,8 +75,7 @@ import de.blau.android.util.FileUtil;
 import de.blau.android.util.GeoMath;
 import de.blau.android.util.Offset;
 import de.blau.android.util.SavingHelper;
-import de.blau.android.util.Util;
-import de.blau.android.views.util.OpenStreetMapTileServer;
+import de.blau.android.util.collections.MRUList;
 
 /**
  * Contains several responsibilities of Logic-Work:
@@ -227,6 +223,18 @@ public class Logic {
 	 */
 	private Task selectedBug;
 
+	final static int MRULIST_SIZE = 10;
+	/**
+	 * last changeset comment
+	 */
+	private MRUList<String> lastComments = new MRUList<String>(MRULIST_SIZE);
+	
+	/**
+	 * last changeset source
+	 */
+	private MRUList<String> lastSources = new MRUList<String>(MRULIST_SIZE);
+	
+	
 	/**
 	 * Are we currently dragging a node?
 	 * Set by {@link #handleTouchEventDown(float, float)}
@@ -292,7 +300,7 @@ public class Logic {
 	 * @param map Instance of the Map. All new Values will be pushed to it.
 	 * @param profile The drawing profile used by the map to paint the objects on screen.
 	 */
-	Logic(final Map map, final Profile profile) {
+	Logic(final Map map) {
 		this.map = map;
 
 		viewBox = getDelegator().getLastBox();
@@ -303,11 +311,9 @@ public class Logic {
 		setSelectedWay(null);
 		setSelectedRelation(null);
 
-		// map.setPaints(paints);
 		map.setDelegator(getDelegator());
 		map.setViewBox(viewBox);
 	}
-
 
 	/**
 	 * Set all {@link Preferences} and delegates them to {@link Tracker} and {@link Map}. The AntiAlias-Flag will be set
@@ -317,7 +323,7 @@ public class Logic {
 	 */
 	void setPrefs(final Preferences prefs) {
 		this.prefs = prefs;
-		Profile.setAntiAliasing(prefs.isAntiAliasingEnabled());
+		DataStyle.setAntiAliasing(prefs.isAntiAliasingEnabled());
 		map.invalidate();
 	}
 
@@ -327,9 +333,9 @@ public class Logic {
 	 * drawing, the current screen properties, and clears the way cache.
 	 */
 	public void updateProfile() {
-		Profile.switchTo(prefs.getMapProfile());
-		Profile.updateStrokes(strokeWidth(viewBox.getWidth()));
-		Profile.setAntiAliasing(prefs.isAntiAliasingEnabled());
+		DataStyle.switchTo(prefs.getMapProfile());
+		DataStyle.updateStrokes(strokeWidth(viewBox.getWidth()));
+		DataStyle.setAntiAliasing(prefs.isAntiAliasingEnabled());
 		// zap the cached style for all ways
 		for (Way w:getDelegator().getCurrentStorage().getWays()) {
 			w.setFeatureProfile(null);
@@ -477,7 +483,7 @@ public class Logic {
 		} else {
 			viewBox.zoomOut();
 		}
-		Profile.updateStrokes(strokeWidth(viewBox.getWidth()));
+		DataStyle.updateStrokes(strokeWidth(viewBox.getWidth()));
 		if (rotatingWay) {
 			showCrosshairsForCentroid();
 		}
@@ -496,7 +502,7 @@ public class Logic {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		Profile.updateStrokes(strokeWidth(viewBox.getWidth()));
+		DataStyle.updateStrokes(strokeWidth(viewBox.getWidth()));
 		if (rotatingWay) {
 			showCrosshairsForCentroid();
 		}
@@ -636,8 +642,9 @@ public class Logic {
 		if (map.getHeight() != 0) {
 			ratio = (float) map.getWidth() / map.getHeight();
 		}
-		viewBox.setBorders(box, ratio);
-		Profile.updateStrokes(strokeWidth(viewBox.getWidth()));
+		viewBox.setBorders(box, ratio, false); // findbugs will complain here however creating box will not actually fail above
+		map.setViewBox(box);
+		DataStyle.updateStrokes(strokeWidth(viewBox.getWidth()));
 		map.invalidate();
 		UndoStorage.updateIcon();
 	}
@@ -678,10 +685,25 @@ public class Logic {
 	 * @return a hash map mapping Ways to distances
 	 */
 	public HashMap<Way, Double> getClickedWaysWithDistances(final float x, final float y) {
+		return getClickedWaysWithDistances(true, x, y);
+	}
+	
+	/**
+	 * Returns all ways within way tolerance from the given coordinates, and their distances from them.
+	 * 
+	 * @param includeClosed include closed ways in the result if true
+	 * @param x x display coordinate
+	 * @param y y display coordinate
+	 * @return a hash map mapping Ways to distances
+	 */
+	public HashMap<Way, Double> getClickedWaysWithDistances(boolean includeClosed, final float x, final float y) {
 		HashMap<Way, Double> result = new HashMap<Way, Double>();
 		boolean showWayIcons = prefs.getShowWayIcons();
 
 		for (Way way : getDelegator().getCurrentStorage().getWays()) {
+			if (way.isClosed() && !includeClosed) {
+				continue;
+			}
 			boolean added = false;
 			List<Node> wayNodes = way.getNodes();
 
@@ -715,7 +737,7 @@ public class Logic {
 				Y = Y/(3*A);
 				X = X/(3*A);
 				double distance =  Math.hypot(x-X, y-Y);
-				if (distance < Profile.getCurrent().nodeToleranceValue) {
+				if (distance < DataStyle.getCurrent().nodeToleranceValue) {
 					result.put(way, distance);
 				}
 			}
@@ -769,12 +791,12 @@ public class Logic {
 				float differenceX = Math.abs(handleX - x);
 				float differenceY = Math.abs(handleY - y);
 				
-				if ((differenceX > Profile.getCurrent().wayToleranceValue) && (differenceY > Profile.getCurrent().wayToleranceValue))	continue;
-				if (Math.hypot(xDelta,yDelta) <= Profile.getCurrent().minLenForHandle) continue;
+				if ((differenceX > DataStyle.getCurrent().wayToleranceValue) && (differenceY > DataStyle.getCurrent().wayToleranceValue))	continue;
+				if (Math.hypot(xDelta,yDelta) <= DataStyle.getCurrent().minLenForHandle) continue;
 				
 				double dist = Math.hypot(differenceX, differenceY);
 				// TODO better choice for tolerance 
-				if ((dist <= Profile.getCurrent().wayToleranceValue) && (dist < bestDistance)) {
+				if ((dist <= DataStyle.getCurrent().wayToleranceValue) && (dist < bestDistance)) {
 					bestDistance = dist;
 					result = new Handle(handleX, handleY);
 				}
@@ -795,7 +817,7 @@ public class Logic {
 	 *         null otherwise
 	 */
 	private Double clickDistance(Node node, final float x, final float y) {
-		return clickDistance(node, x, y, node.isTagged() ? Profile.getCurrent().nodeToleranceValue : Profile.getCurrent().wayToleranceValue/2);
+		return clickDistance(node, x, y, node.isTagged() ? DataStyle.getCurrent().nodeToleranceValue : DataStyle.getCurrent().wayToleranceValue/2);
 	}
 
 	private Double clickDistance(Node node, final float x, final float y, float tolerance) {
@@ -893,7 +915,19 @@ public class Logic {
 	 * @return the ways
 	 */
 	public List<Way> getClickedWays(final float x, final float y) {
-		return waySorter.sort(getClickedWaysWithDistances(x, y));
+		return getClickedWays(true, x, y);
+	}
+	
+	/**
+	 * Returns all ways within click tolerance from the given coordinate 
+	 * 
+	 * @param includeClosed include closed ways in the result if true
+	 * @param x x display-coordinate.
+	 * @param y y display-coordinate.
+	 * @return the ways
+	 */
+	public List<Way> getClickedWays(boolean includeClosed, final float x, final float y) {
+		return waySorter.sort(getClickedWaysWithDistances(includeClosed, x, y));
 	}
 	
 	/**
@@ -993,7 +1027,7 @@ public class Logic {
 			draggingNode = false;
 			draggingWay = false;
 			draggingHandle = false;
-			if (selectedNodes != null && selectedNodes.size() == 1 && selectedWays == null && clickDistance(selectedNodes.get(0), x, y, prefs.largeDragArea() ? Profile.getCurrent().largDragToleranceRadius : Profile.getCurrent().nodeToleranceValue) != null) {
+			if (selectedNodes != null && selectedNodes.size() == 1 && selectedWays == null && clickDistance(selectedNodes.get(0), x, y, prefs.largeDragArea() ? DataStyle.getCurrent().largDragToleranceRadius : DataStyle.getCurrent().nodeToleranceValue) != null) {
 				draggingNode = true;
 				if (prefs.largeDragArea()) {
 					startX = lonE7ToX(selectedNodes.get(0).getLon());
@@ -1054,7 +1088,9 @@ public class Logic {
 						if (rotatingWay) {
 							rotatingWay = false;
 							hideCrosshairs();
-						} else {
+						} else if (getMode()==Mode.MODE_EASYEDIT
+								&& selectedWays == null
+								&& selectedRelations == null){
 							// way center / handle
 							// TODO this may cause issues in action modes were we expect only something from the available selection to be returned
 							Handle handle = getClickedWayHandleWithDistances(x, y);
@@ -1073,7 +1109,7 @@ public class Logic {
 			rotatingWay = false;
 			draggingHandle = false;
 		}
-		Log.d("Logic","handleTouchEventDown creating checkpoints");
+		Log.d(DEBUG_TAG,"handleTouchEventDown creating checkpoints");
 		if (draggingNode || draggingWay) {
 			if (draggingMultiselect) {
 				createCheckpoint(R.string.undo_action_moveobjects);
@@ -1232,6 +1268,7 @@ public class Logic {
 	 * @param screenTransY Movement on the screen.
 	 */
 	private void performTranslation(final float screenTransX, final float screenTransY) {
+		// Log.d(DEBUG_TAG,"performTranslation " + screenTransX + " " + screenTransY);
 		int height = map.getHeight();
 		int lon = xToLonE7(screenTransX);
 		int lat = yToLatE7(height - screenTransY);
@@ -1258,7 +1295,7 @@ public class Logic {
 		int lat = yToLatE7(height - screenTransY);
 		int relativeLon = lon - viewBox.getLeft();
 		int relativeLat = lat - viewBox.getBottom();
-		OpenStreetMapTileServer osmts = map.getOpenStreetMapTilesOverlay().getRendererInfo();
+		TileLayerServer osmts = map.getOpenStreetMapTilesOverlay().getRendererInfo();
 		double lonOffset = 0d;
 		double latOffset = 0d;
 		Offset o = osmts.getOffset(map.getZoomLevel());
@@ -1364,17 +1401,21 @@ public class Logic {
 	}
 	
 	/**
-	 * Executes an add-command for x,y but only if on way. Adds new node to storage. Will switch selected node,
+	 * Executes an add-command for x,y but only if on way. Adds new node to storage. Will switch to selected node,
 	 * 
 	 * @param x screen-coordinate
 	 * @param y screen-coordinate
 	 * @throws OsmIllegalOperationException 
 	 */
 	public synchronized boolean performAddOnWay(final float x, final float y) throws OsmIllegalOperationException {
+		return performAddOnWay(null,x,y);
+	}
+		
+	public synchronized boolean performAddOnWay(List<Way>ways,final float x, final float y) throws OsmIllegalOperationException {
 		createCheckpoint(R.string.undo_action_add);
 		Node savedSelectedNode = selectedNodes != null && selectedNodes.size() > 0 ? selectedNodes.get(0) : null;
 		
-		Node newSelectedNode = getClickedNodeOrCreatedWayNode(x, y);
+		Node newSelectedNode = getClickedNodeOrCreatedWayNode(ways,x, y);
 
 		if (newSelectedNode == null) {
 			newSelectedNode = savedSelectedNode;
@@ -1509,12 +1550,14 @@ public class Logic {
 	 * Splits a way at a given node
 	 * @param way the way to split
 	 * @param node the node at which the way should be split
+	 * @return the new way or null if failed
 	 */
-	public synchronized void performSplit(final Way way, final Node node) {
+	public synchronized Way performSplit(final Way way, final Node node) {
 		// setSelectedNode(node);
 		createCheckpoint(R.string.undo_action_split_way);
-		getDelegator().splitAtNode(way, node);
+		Way result = getDelegator().splitAtNode(way, node);
 		map.invalidate();
+		return result;
 	}
 	
 	/**
@@ -1522,11 +1565,13 @@ public class Logic {
 	 * @param way
 	 * @param node1
 	 * @param node2
+	 * @return null if split fails, the two ways otherwise
 	 */
-	public synchronized void performClosedWaySplit(Way way, Node node1, Node node2, boolean createPolygons) {
+	public synchronized Way[] performClosedWaySplit(Way way, Node node1, Node node2, boolean createPolygons) {
 		createCheckpoint(R.string.undo_action_split_way);
-		getDelegator().splitAtNodes(way, node1, node2, createPolygons);
+		Way[] result = getDelegator().splitAtNodes(way, node1, node2, createPolygons);
 		map.invalidate();
+		return result;
 	}
 
 	
@@ -1572,10 +1617,21 @@ public class Logic {
 	 * Orthogonalize a way (aka make angles 90°)
 	 * @param way
 	 */
-	public synchronized void performOrthogonalize(Way way) {
-		if (way.getNodes().size() < 3) return;
+	public void performOrthogonalize(Way way) {
+		if (way != null && way.getNodes().size() < 3) return;
+		ArrayList<Way> ways = new ArrayList<Way>(1);
+		ways.add(way);
+		performOrthogonalize(ways);
+	}
+	
+	/**
+	 * Orthogonalize multiple ways at once (aka make angles 90°)
+	 * @param ways
+	 */
+	public synchronized void performOrthogonalize(List<Way> ways) {
+		if (ways==null || ways.size()==0) return;
 		createCheckpoint(R.string.undo_action_orthogonalize);
-		getDelegator().orthogonalizeWay(way);
+		getDelegator().orthogonalizeWay(ways);
 		map.invalidate();
 	}
 
@@ -1790,16 +1846,34 @@ public class Logic {
 	 * @throws OsmIllegalOperationException 
 	 */
 	private synchronized Node getClickedNodeOrCreatedWayNode(final float x, final float y) throws OsmIllegalOperationException {
+		return getClickedNodeOrCreatedWayNode(null,x,y);
+	}
+	
+	/**
+	 * Tries to locate the selected node. If x,y lays on a way, a new node at this location will be created, stored in
+	 * storage and returned.
+	 * 
+	 * @param ways list of candidate ways or null for all
+	 * @param x the x screen coordinate
+	 * @param y the y screen coordinate
+	 * @return the selected node or the created node, if x,y lays on a way. Null if any node or way was selected.
+	 * @throws OsmIllegalOperationException 
+	 */
+	private synchronized Node getClickedNodeOrCreatedWayNode(List<Way>ways,final float x, final float y) throws OsmIllegalOperationException {
 		Node node = getClickedNode(x, y);
 		if (node != null) {
 			return node;
 		}
+		if (ways==null) {
+			ways=getDelegator().getCurrentStorage().getWays();
+		}
 		Node savedNode1 = null;
 		Node savedNode2 = null;
-		Way savedWay = null;
+		ArrayList<Way> savedWays = new ArrayList<Way>();
+		ArrayList<Boolean> savedWaysSameDirection = new ArrayList<Boolean>();
 		double savedDistance = Double.MAX_VALUE;
 		//create a new node on a way
-		for (Way way : getDelegator().getCurrentStorage().getWays()) {
+		for (Way way : ways) {
 			List<Node> wayNodes = way.getNodes();
 			for (int k = 1, wayNodesSize = wayNodes.size(); k < wayNodesSize; ++k) {
 				Node node1 = wayNodes.get(k - 1);
@@ -1816,18 +1890,33 @@ public class Logic {
 						savedNode1 = node1;
 						savedNode2 = node2;
 						savedDistance = distance;
-						savedWay = way;
+						savedWays.clear();
+						savedWays.add(way);
+						savedWaysSameDirection.clear();
+						savedWaysSameDirection.add(true);
+					} else if ((node1==savedNode1 && node2==savedNode2)) { 
+						savedWays.add(way);
+						savedWaysSameDirection.add(true);
+					} else if ((node1==savedNode2 && node2==savedNode1)) {
+						savedWays.add(way);
+						savedWaysSameDirection.add(false);
 					}
 				}
 			}
 		}
-		// way found that is in toleance range
+		// way(s) found in tolerance range
 		if (savedNode1 != null && savedNode2 != null) {		
 			node = createNodeOnWay(savedNode1, savedNode2, x, y);
 			if (node != null) {
 				getDelegator().insertElementSafe(node);
 				try {
-					getDelegator().addNodeToWayAfter(savedNode1, node, savedWay);
+					for (int i=0;i<savedWays.size();i++) {
+						if (savedWaysSameDirection.get(i)) {
+							getDelegator().addNodeToWayAfter(savedNode1, node, savedWays.get(i));
+						} else {
+							getDelegator().addNodeToWayAfter(savedNode2, node, savedWays.get(i));
+						}
+					}
 				} catch (OsmIllegalOperationException e) {
 					getDelegator().removeNode(node);
 					throw new OsmIllegalOperationException(e);
@@ -1860,8 +1949,7 @@ public class Logic {
 			float[] p = GeoMath.closestPoint(x, y, node1X, node1Y, node2X, node2Y);
 			int lat = yToLatE7(p[1]);
 			int lon = xToLonE7(p[0]);
-			Node node = getDelegator().getFactory().createNodeWithNewId(lat, lon);
-			return node;
+			return getDelegator().getFactory().createNodeWithNewId(lat, lon);
 		}
 		return null;
 	}
@@ -1874,7 +1962,7 @@ public class Logic {
 	private boolean isPositionOnLine(final float x, final float y,
 			final float node1X, final float node1Y,
 			final float node2X, final float node2Y) {
-		float tolerance = Profile.getCurrent().wayToleranceValue / 2f;
+		float tolerance = DataStyle.getCurrent().wayToleranceValue / 2f;
 		if (GeoMath.isBetween(x, node1X, node2X, tolerance) && GeoMath.isBetween(y, node1Y, node2Y, tolerance)) {
 			return (GeoMath.getLineDistance(x, y, node1X, node1Y, node2X, node2Y) < tolerance);
 		}
@@ -1914,16 +2002,16 @@ public class Logic {
 	 * 
 	 * @param mapBox Box defining the area to be loaded.
 	 * @param add if true add this data to existing
-	 * @param postLoadHandler TODO
-	 * @param auto download is being done automatically, try not mess up/move the display
+	 * @param postLoadHandler handler to execute after successful download
 	 */
 	public synchronized void downloadBox(final BoundingBox mapBox, final boolean add, final PostAsyncActionHandler postLoadHandler) {
 		try {
 			mapBox.makeValidForApi();
 		} catch (OsmException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		} // TODO remove this? and replace with better error messaging
+			Log.e(DEBUG_TAG,"downloadBox invalid download box");
+			ErrorAlert.showDialog(Application.mainActivity,ErrorCodes.INVALID_BOUNDING_BOX);
+			return;
+		} 
 		
 		final PostMergeHandler postMerge =  new PostMergeHandler(){
 
@@ -1937,7 +2025,7 @@ public class Logic {
 			
 			@Override
 			protected void onPreExecute() {
-				Application.mainActivity.showDialog(DialogFactory.PROGRESS_LOADING);
+				Progress.showDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 			}
 			
 			@Override
@@ -1947,15 +2035,17 @@ public class Logic {
 					Server server = prefs.getServer();
 					server.getCapabilities();
 					if (!(server.apiAvailable() && server.readableDB())) {
-						return DialogFactory.API_OFFLINE;
+						return ErrorCodes.API_OFFLINE;
 					}
 					final OsmParser osmParser = new OsmParser();
 					final InputStream in = prefs.getServer().getStreamForBox(mapBox);
 					try {
+						long startTime = System.currentTimeMillis();
 						osmParser.start(in);
+						Log.d(DEBUG_TAG,"downloadBox downloaded and parsed input in " + (System.currentTimeMillis()-startTime) + "ms");
 						if (arg[0]) { // incremental load
 							if (!getDelegator().mergeData(osmParser.getStorage(),postMerge)) {
-								result = DialogFactory.DATA_CONFLICT;
+								result = ErrorCodes.DATA_CONFLICT;
 							} else {
 								if (mapBox != null) {
 									// if we are simply expanding the area no need keep the old bounding boxes
@@ -1973,7 +2063,7 @@ public class Logic {
 							getDelegator().reset(false);
 							getDelegator().setCurrentStorage(osmParser.getStorage()); // this sets dirty flag
 							if (mapBox != null) {
-								Log.d("Logic","setting original bbox");
+								Log.d(DEBUG_TAG,"downloadBox setting original bbox");
 								getDelegator().setOriginalBox(mapBox);
 							}
 						}
@@ -1982,12 +2072,12 @@ public class Logic {
 						SavingHelper.close(in);
 					}
 				} catch (SAXException e) {
-					Log.e("Vespucci", "Problem parsing", e);
+					Log.e(DEBUG_TAG, "downloadBox problem parsing", e);
 					Exception ce = e.getException();
 					if ((ce instanceof StorageException) && ((StorageException)ce).getCode() == StorageException.OOM) {
-						result = DialogFactory.OUT_OF_MEMORY;
+						result = ErrorCodes.OUT_OF_MEMORY;
 					} else {
-						result = DialogFactory.INVALID_DATA_RECEIVED;
+						result = ErrorCodes.INVALID_DATA_RECEIVED;
 					}
 					if (getDelegator().getBoundingBoxes().contains(mapBox)) { // remove if download failed
 						getDelegator().deleteBoundingBox(mapBox);
@@ -1995,20 +2085,20 @@ public class Logic {
 				} catch (ParserConfigurationException e) {
 					// crash and burn
 					// TODO this seems to happen when the API call returns text from a proxy or similar intermediate network device... need to display what we actually got
-					Log.e("Vespucci", "Problem parsing", e);
-					result = DialogFactory.INVALID_DATA_RECEIVED;
+					Log.e(DEBUG_TAG, "downloadBox problem parsing", e);
+					result = ErrorCodes.INVALID_DATA_RECEIVED;
 					if (getDelegator().getBoundingBoxes().contains(mapBox)) { // remove if download failed
 						getDelegator().deleteBoundingBox(mapBox);
 					}
 				} catch (OsmServerException e) {
 					result = e.getErrorCode();
-					Log.e("Vespucci", "Problem downloading", e);
+					Log.e(DEBUG_TAG, "downloadBox problem downloading", e);
 					if (getDelegator().getBoundingBoxes().contains(mapBox)) { // remove if download failed
 						getDelegator().deleteBoundingBox(mapBox);
 					}
 				} catch (IOException e) {
-					result = DialogFactory.NO_CONNECTION;
-					Log.e("Vespucci", "Problem downloading", e);
+					result = ErrorCodes.NO_CONNECTION;
+					Log.e(DEBUG_TAG, "downloadBox problem downloading", e);
 					if (getDelegator().getBoundingBoxes().contains(mapBox)) { // remove if download failed
 						getDelegator().deleteBoundingBox(mapBox);
 					}
@@ -2018,12 +2108,7 @@ public class Logic {
 			
 			@Override
 			protected void onPostExecute(Integer result) {	
-				try {
-					Application.mainActivity.dismissDialog(DialogFactory.PROGRESS_LOADING);
-				} catch (IllegalArgumentException e) {
-					// Avoid crash if dialog is already dismissed
-					Log.d("Logic", "", e);
-				}
+				Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 
 				View map = Application.mainActivity.getCurrentFocus();
 				try {
@@ -2034,15 +2119,15 @@ public class Logic {
 				}
 
 				if (result != 0) {
-					if (result == DialogFactory.OUT_OF_MEMORY) {
+					if (result == ErrorCodes.OUT_OF_MEMORY) {
 						System.gc();
 						if (getDelegator().isDirty()) {
-							result = DialogFactory.OUT_OF_MEMORY_DIRTY;
+							result = ErrorCodes.OUT_OF_MEMORY_DIRTY;
 						}
 					}	
 					try {
 						if (!Application.mainActivity.isFinishing()) {
-							Application.mainActivity.showDialog(result);
+							ErrorAlert.showDialog(Application.mainActivity,result);
 						}
 					} catch (Exception ex) { // now and then this seems to throw a WindowManager.BadTokenException, however report, don't crash
 						ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
@@ -2053,7 +2138,7 @@ public class Logic {
 						postLoadHandler.execute();
 					}
 				}
-				Profile.updateStrokes(strokeWidth(mapBox.getWidth()));
+				DataStyle.updateStrokes(strokeWidth(mapBox.getWidth()));
 				map.invalidate();
 
 				UndoStorage.updateIcon();
@@ -2069,7 +2154,7 @@ public class Logic {
 	 * @param add if true add this data to existing
 	 * @param auto download is being done automatically, try not mess up/move the display
 	 */
-	public synchronized static void autoDownloadBox(final Context context, final Server server, final BoundingBox mapBox) {
+	public synchronized void autoDownloadBox(final Context context, final Server server, final BoundingBox mapBox) {
 		try {
 			mapBox.makeValidForApi();
 		} catch (OsmException e1) {
@@ -2100,7 +2185,7 @@ public class Logic {
 					try {
 						osmParser.start(in);
 						if (!getDelegator().mergeData(osmParser.getStorage(),postMerge)) {
-							result = DialogFactory.DATA_CONFLICT;
+							result = ErrorCodes.DATA_CONFLICT;
 						} else {
 							if (mapBox != null) {
 								// if we are simply expanding the area no need keep the old bounding boxes
@@ -2126,9 +2211,9 @@ public class Logic {
 					Log.e("Vespucci", "Problem parsing", e);
 					Exception ce = e.getException();
 					if ((ce instanceof StorageException) && ((StorageException)ce).getCode() == StorageException.OOM) {
-						result = DialogFactory.OUT_OF_MEMORY;
+						result = ErrorCodes.OUT_OF_MEMORY;
 					} else {
-						result = DialogFactory.INVALID_DATA_RECEIVED;
+						result = ErrorCodes.INVALID_DATA_RECEIVED;
 					}
 					if (getDelegator().getBoundingBoxes().contains(mapBox)) { // remove if download failed
 						getDelegator().deleteBoundingBox(mapBox);
@@ -2137,7 +2222,7 @@ public class Logic {
 					// crash and burn
 					// TODO this seems to happen when the API call returns text from a proxy or similar intermediate network device... need to display what we actually got
 					Log.e("Vespucci", "Problem parsing", e);
-					result = DialogFactory.INVALID_DATA_RECEIVED;
+					result = ErrorCodes.INVALID_DATA_RECEIVED;
 					if (getDelegator().getBoundingBoxes().contains(mapBox)) { // remove if download failed
 						getDelegator().deleteBoundingBox(mapBox);
 					}
@@ -2148,7 +2233,7 @@ public class Logic {
 						getDelegator().deleteBoundingBox(mapBox);
 					}
 				} catch (IOException e) {
-					result = DialogFactory.NO_CONNECTION;
+					result = ErrorCodes.NO_CONNECTION;
 					Log.e("Vespucci", "Problem downloading", e);
 					if (getDelegator().getBoundingBoxes().contains(mapBox)) { // remove if download failed
 						getDelegator().deleteBoundingBox(mapBox);
@@ -2190,22 +2275,22 @@ public class Logic {
 	}
 
 	/**
-	 * Return a single element from the API
+	 * Return a single element from the API, does not merge into storage, synchronous
 	 * 
-	 * @param type
-	 * @param id
-	 * @return
+	 * @param type type of the element
+	 * @param id id of the element
+	 * @return element if successful, null if not
 	 */
-	 synchronized OsmElement downloadElement(final String type, final long id) {
-		
-		class MyTask extends AsyncTask<Void, Void, OsmElement> {
+	public synchronized OsmElement getElement(final String type, final long id) {
+
+		class GetElementTask extends AsyncTask<Void, Void, OsmElement> {
 			int result = 0;
-			
+
 			@Override
 			protected void onPreExecute() {
-	
+
 			}
-			
+
 			@Override
 			protected OsmElement doInBackground(Void... arg) {
 				OsmElement element = null;
@@ -2219,36 +2304,36 @@ public class Logic {
 						SavingHelper.close(in);
 					}
 				} catch (SAXException e) {
-					Log.e("Vespucci", "Problem parsing", e);
+					Log.e(DEBUG_TAG, "getElement problem parsing", e);
 					Exception ce = e.getException();
 					if ((ce instanceof StorageException) && ((StorageException)ce).getCode() == StorageException.OOM) {
-						result = DialogFactory.OUT_OF_MEMORY;
+						result = ErrorCodes.OUT_OF_MEMORY;
 					} else {
-						result = DialogFactory.INVALID_DATA_RECEIVED;
+						result = ErrorCodes.INVALID_DATA_RECEIVED;
 					}
 				} catch (ParserConfigurationException e) {
 					// crash and burn
 					// TODO this seems to happen when the API call returns text from a proxy or similar intermediate network device... need to display what we actually got
-					Log.e("Vespucci", "Problem parsing", e);
-					result = DialogFactory.INVALID_DATA_RECEIVED;
+					Log.e(DEBUG_TAG, "getElement problem parsing", e);
+					result = ErrorCodes.INVALID_DATA_RECEIVED;
 				} catch (OsmServerException e) {
-					Log.e("Vespucci", "Problem downloading", e);
+					Log.e(DEBUG_TAG, "getElement problem downloading", e);
 				} catch (IOException e) {
-					result = DialogFactory.NO_CONNECTION;
-					Log.e("Vespucci", "Problem downloading", e);
+					result = ErrorCodes.NO_CONNECTION;
+					Log.e(DEBUG_TAG, "getElement problem downloading", e);
 				}
 				return element;
 			}
-			
+
 			@Override
 			protected void onPostExecute(OsmElement result) {
 				// potentially do something if there is an error
 			}
-			
-		};
-		MyTask loader = new MyTask();
+
+		}
+		GetElementTask loader = new GetElementTask();
 		loader.execute();
-		
+
 		try {
 			return loader.get(20, TimeUnit.SECONDS);
 		} catch (InterruptedException e) {
@@ -2259,6 +2344,103 @@ public class Logic {
 			return null;
 		}
 	}
+
+	 
+	 /**
+	  * Download a single element from the API and merge
+	  * 
+	  * @param ctx COntext
+	  * @param type type of the element
+	  * @param id OSM id of the element
+	  * @param relationFull if we are downloading a relation download with full option
+	  * @param withParents download parent relations
+	  * @param postLoadHandler callback to execute after download completes if null method waits for download to finish
+	  * @return an error code 0 for success
+	  */
+	 public synchronized int downloadElement(Context ctx, final String type, final long id, 
+			 final boolean relationFull, final boolean withParents,
+			 final PostAsyncActionHandler postLoadHandler) {
+		 class DownLoadElementTask extends AsyncTask<Void, Void, Integer> {
+			 @Override
+			 protected void onPreExecute() {
+			 }
+
+			 @Override
+			 protected Integer doInBackground(Void... arg) {
+				 int result = 0;
+				 try {
+					 final Server server = prefs.getServer();
+					 final OsmParser osmParser = new OsmParser();
+					
+					 // TODO this currently does not retrieve ways the node may be a member of
+					 // we always retrieve ways with nodes, relations "full" is optional
+					 InputStream in = server.getStreamForElement((type.equals(Relation.NAME) && relationFull) ||  type.equals(Way.NAME)? "full" : null, type, id);
+					 
+					 try {
+						 osmParser.start(in);
+					 } finally {
+						 SavingHelper.close(in);
+					 }
+					 if (withParents) {
+						 // optional retrieve relations the element is a member of
+						 in = server.getStreamForElement("relations", type, id);
+						 try {
+							 osmParser.start(in);
+						 } finally {
+							 SavingHelper.close(in);
+						 }
+					 }
+					 
+					 if (!getDelegator().mergeData(osmParser.getStorage(),null)) { // FIXME need to check if providing a handler makes sense here
+						 result = ErrorCodes.DATA_CONFLICT;
+					 } 
+				 } catch (SAXException e) {
+					 Log.e(DEBUG_TAG, "downloadElement problem parsing", e);
+					 Exception ce = e.getException();
+					 if ((ce instanceof StorageException) && ((StorageException)ce).getCode() == StorageException.OOM) {
+						 result = ErrorCodes.OUT_OF_MEMORY;
+					 } else {
+						 result = ErrorCodes.INVALID_DATA_RECEIVED;
+					 }
+				 } catch (ParserConfigurationException e) {
+					 // crash and burn
+					 // TODO this seems to happen when the API call returns text from a proxy or similar intermediate network device... need to display what we actually got
+					 Log.e(DEBUG_TAG, "downloadElement problem parsing", e);
+					 result = ErrorCodes.INVALID_DATA_RECEIVED;
+				 } catch (OsmServerException e) {
+					 Log.e(DEBUG_TAG, "downloadElement problem downloading", e);
+				 } catch (IOException e) {
+					 result = ErrorCodes.NO_CONNECTION;
+					 Log.e(DEBUG_TAG, "downloadElement problem downloading", e);
+				 }
+				 return result;
+			 }
+
+			 @Override
+			 protected void onPostExecute(Integer result) {
+				if (result == 0 && postLoadHandler != null) {
+					postLoadHandler.execute();
+				}
+			 }
+
+		 }
+		 DownLoadElementTask loader = new DownLoadElementTask();
+		 loader.execute();
+
+		 if (postLoadHandler == null) {
+			 try {
+				 return loader.get(20, TimeUnit.SECONDS);
+			 } catch (InterruptedException e) {
+				 return -1;
+			 } catch (ExecutionException e) {
+				 return -1;
+			 } catch (TimeoutException e) {
+				 return -1;
+			 }
+		 } else {
+			 return 0;
+		 }
+	 }
 	
 	/**
 	 * Return multiple elements of the same type from the API and merge them in to our data
@@ -2350,91 +2532,6 @@ public class Logic {
 //	}
 	
 	/**
-	 * Update a single element from the API
-	 * 
-	 * @param type
-	 * @param id
-	 */
-	 synchronized int updateElement(final String type, final long id) {
-		class MyTask extends AsyncTask<Void, Void, Integer> {
-			@Override
-			protected void onPreExecute() {
-			}
-			
-			@Override
-			protected Integer doInBackground(Void... arg) {
-				int result = 0;
-				try {
-					final OsmParser osmParser = new OsmParser();
-					if (!type.equals(Node.NAME)) {
-						final InputStream in = prefs.getServer().getStreamForElement("full", type, id);
-						try {
-							osmParser.start(in);
-						} finally {
-							SavingHelper.close(in);
-						}
-					} else {
-						// TODO this currently does not retrieve ways the updated node may be a member of
-						InputStream in = prefs.getServer().getStreamForElement(null, type, id);
-						try {
-							osmParser.start(in);
-						} finally {
-							SavingHelper.close(in);
-						}
-						in = prefs.getServer().getStreamForElement("relations", type, id);
-						try {
-							osmParser.start(in);
-						} finally {
-							SavingHelper.close(in);
-						}
-					}
-					if (!getDelegator().mergeData(osmParser.getStorage(),null)) { // FIXME need to check if providing a handler makes sense here
-						result = DialogFactory.DATA_CONFLICT;
-					} 
-				} catch (SAXException e) {
-					Log.e("Vespucci", "Problem parsing", e);
-					Exception ce = e.getException();
-					if ((ce instanceof StorageException) && ((StorageException)ce).getCode() == StorageException.OOM) {
-						result = DialogFactory.OUT_OF_MEMORY;
-					} else {
-						result = DialogFactory.INVALID_DATA_RECEIVED;
-					}
-				} catch (ParserConfigurationException e) {
-					// crash and burn
-					// TODO this seems to happen when the API call returns text from a proxy or similar intermediate network device... need to display what we actually got
-					Log.e("Vespucci", "Problem parsing", e);
-					result = DialogFactory.INVALID_DATA_RECEIVED;
-				} catch (OsmServerException e) {
-					Log.e("Vespucci", "Problem downloading", e);
-				} catch (IOException e) {
-					result = DialogFactory.NO_CONNECTION;
-					Log.e("Vespucci", "Problem downloading", e);
-				}
-				return result;
-			}
-			
-			@Override
-			protected void onPostExecute(Integer result) {
-				// potentially do something if there is an error
-			}
-			
-		};
-		MyTask loader = new MyTask();
-		loader.execute();
-		
-		try {
-			return loader.get(20, TimeUnit.SECONDS);
-		} catch (InterruptedException e) {
-			return -1;
-		} catch (ExecutionException e) {
-			return -1;
-		} catch (TimeoutException e) {
-			return -1;
-		}
-	}
-	
-
-	/**
 	 * Element is deleted on server, delete locally but don't upload
 	 * A bit iffy because of memberships in other objects
 	 * 
@@ -2475,7 +2572,7 @@ public class Logic {
 			
 			@Override
 			protected void onPreExecute() {
-				Application.mainActivity.showDialog(DialogFactory.PROGRESS_LOADING);
+				Progress.showDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 			}
 			
 			@Override
@@ -2484,7 +2581,6 @@ public class Logic {
 				try {
 					final OsmParser osmParser = new OsmParser();
 					final InputStream in = new BufferedInputStream(is);
-;
 					try {
 						osmParser.start(in);
 						
@@ -2500,17 +2596,17 @@ public class Logic {
 					Log.e("Vespucci", "Problem parsing", e);
 					Exception ce = e.getException();
 					if ((ce instanceof StorageException) && ((StorageException)ce).getCode() == StorageException.OOM) {
-						result = DialogFactory.OUT_OF_MEMORY;
+						result = ErrorCodes.OUT_OF_MEMORY;
 					} else {
-						result = DialogFactory.INVALID_DATA_RECEIVED;
+						result = ErrorCodes.INVALID_DATA_RECEIVED;
 					}
 				} catch (ParserConfigurationException e) {
 					// crash and burn
 					// TODO this seems to happen when the API call returns text from a proxy or similar intermediate network device... need to display what we actually got
 					Log.e("Vespucci", "Problem parsing", e);
-					result = DialogFactory.INVALID_DATA_RECEIVED;
+					result = ErrorCodes.INVALID_DATA_RECEIVED;
 				} catch (IOException e) {
-					result = DialogFactory.NO_CONNECTION;
+					result = ErrorCodes.NO_CONNECTION;
 					Log.e("Vespucci", "Problem reading", e);
 				}
 				return result;
@@ -2518,12 +2614,7 @@ public class Logic {
 			
 			@Override
 			protected void onPostExecute(Integer result) {
-				try {
-					Application.mainActivity.dismissDialog(DialogFactory.PROGRESS_LOADING);
-				} catch (IllegalArgumentException e) {
-					 // Avoid crash if dialog is already dismissed
-					Log.d("Logic", "", e);
-				}
+				Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 				View map = Application.mainActivity.getCurrentFocus();
 				try {
 					viewBox.setRatio((float)map.getWidth() / (float)map.getHeight());
@@ -2532,22 +2623,22 @@ public class Logic {
 					e.printStackTrace();
 				}
 				if (result != 0) {
-					if (result == DialogFactory.OUT_OF_MEMORY) {
+					if (result == ErrorCodes.OUT_OF_MEMORY) {
 						System.gc();
 						if (getDelegator().isDirty()) {
-							result = DialogFactory.OUT_OF_MEMORY_DIRTY;
+							result = ErrorCodes.OUT_OF_MEMORY_DIRTY;
 						}
 					}
 					try {
 						if (!Application.mainActivity.isFinishing()) {
-							Application.mainActivity.showDialog(result);
+							ErrorAlert.showDialog(Application.mainActivity,result);
 						}
 					} catch (Exception ex) { // now and then this seems to throw a WindowManager.BadTokenException, however report, don't crash
 						ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
 						ACRA.getErrorReporter().handleException(ex);
 					}
 				}
-				Profile.updateStrokes(strokeWidth(viewBox.getWidth()));
+				DataStyle.updateStrokes(strokeWidth(viewBox.getWidth()));
 				map.invalidate();
 				UndoStorage.updateIcon();
 			}
@@ -2566,7 +2657,7 @@ public class Logic {
 			
 			@Override
 			protected void onPreExecute() {
-				Application.mainActivity.showDialog(DialogFactory.PROGRESS_SAVING);
+				Progress.showDialog(Application.mainActivity, Progress.PROGRESS_SAVING);
 			}
 			
 			@Override
@@ -2589,19 +2680,19 @@ public class Logic {
 					try {
 						getDelegator().save(out);
 					} catch (IllegalArgumentException e) {
-						result = DialogFactory.FILE_WRITE_FAILED;
+						result = ErrorCodes.FILE_WRITE_FAILED;
 						Log.e("Logic", "Problem writing", e);
 					} catch (IllegalStateException e) {
-						result = DialogFactory.FILE_WRITE_FAILED;
+						result = ErrorCodes.FILE_WRITE_FAILED;
 						Log.e("Logic", "Problem writing", e);
 					} catch (XmlPullParserException e) {
-						result = DialogFactory.FILE_WRITE_FAILED;
+						result = ErrorCodes.FILE_WRITE_FAILED;
 						Log.e("Logic", "Problem writing", e);
 					} finally {
 						SavingHelper.close(out);
 					}
 				} catch (IOException e) {
-					result = DialogFactory.FILE_WRITE_FAILED;
+					result = ErrorCodes.FILE_WRITE_FAILED;
 					Log.e("Logic", "Problem writing", e);
 				}
 				return result;
@@ -2609,12 +2700,7 @@ public class Logic {
 			
 			@Override
 			protected void onPostExecute(Integer result) {
-				try {
-					Application.mainActivity.dismissDialog(DialogFactory.PROGRESS_SAVING);
-				} catch (IllegalArgumentException e) {
-					 // Avoid crash if dialog is already dismissed
-					Log.d("Logic", "", e);
-				}
+				Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_SAVING);
 				View map = Application.mainActivity.getCurrentFocus();
 				try {
 					viewBox.setRatio((float)map.getWidth() / (float)map.getHeight());
@@ -2623,14 +2709,14 @@ public class Logic {
 					e.printStackTrace();
 				}
 				if (result != 0) {
-					if (result == DialogFactory.OUT_OF_MEMORY) {
+					if (result == ErrorCodes.OUT_OF_MEMORY) {
 						System.gc();
 						if (getDelegator().isDirty()) {
-							result = DialogFactory.OUT_OF_MEMORY_DIRTY;
+							result = ErrorCodes.OUT_OF_MEMORY_DIRTY;
 						}
 					}
 					if (!Application.mainActivity.isFinishing()) {
-						Application.mainActivity.showDialog(result);
+						ErrorAlert.showDialog(Application.mainActivity,result);
 					}
 				}
 			}
@@ -2647,7 +2733,7 @@ public class Logic {
 			getDelegator().writeToFile(Application.mainActivity);
 			Application.getTaskStorage().writeToFile(Application.mainActivity);
 		} catch (IOException e) {
-			Log.e("Vespucci", "Problem saving", e);
+			Log.e(DEBUG_TAG, "Problem saving", e);
 		}
 	}
 	
@@ -2673,24 +2759,25 @@ public class Logic {
 	 * Saves the current editing state (selected objects, editing mode, etc) to file.
 	 */
 	void saveEditingState() {
-		OpenStreetMapTileServer osmts = map.getOpenStreetMapTilesOverlay().getRendererInfo();
-		EditState editState = new EditState(mode, selectedNodes, selectedWays, selectedRelations, selectedBug, osmts, 
-				Application.mainActivity.getShowGPS(), Application.mainActivity.getAutoDownload(),
-				Application.mainActivity.getBugAutoDownload(),Application.mainActivity.getImageFileName(),
+		TileLayerServer osmts = map.getOpenStreetMapTilesOverlay().getRendererInfo();
+		EditState editState = new EditState(Application.mainActivity,this, osmts, Application.mainActivity.getImageFileName(),
 				viewBox);
-		new SavingHelper<EditState>().save(EDITSTATE_FILENAME, editState, false);	
+		new SavingHelper<EditState>().save(Application.mainActivity,EDITSTATE_FILENAME, editState, false);	
 	}
 	
 	/**
 	 * Loads the current editing state (selected objects, editing mode, etc) from file.
+	 * @param setViewBox TODO
 	 */
-	void loadEditingState() {
-		EditState editState = new SavingHelper<EditState>().load(EDITSTATE_FILENAME, false);
+	void loadEditingState(boolean setViewBox) {
+		EditState editState = new SavingHelper<EditState>().load(Application.mainActivity,EDITSTATE_FILENAME, false);
 		if(editState != null) { // 
-			editState.setSelected(this);
 			editState.setOffset(map.getOpenStreetMapTilesOverlay().getRendererInfo());
-			editState.setMiscState(Application.mainActivity);
-			editState.setViewBox(this,map);
+			editState.setMiscState(Application.mainActivity, this);
+			editState.setSelected(this);
+			if (setViewBox) {
+				editState.setViewBox(this,map);
+			}
 		}
 	}
 
@@ -2712,7 +2799,7 @@ public class Logic {
 			
 			@Override
 			protected void onPreExecute() {
-				Application.mainActivity.showDialog(DialogFactory.PROGRESS_LOADING);
+				Progress.showDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 				Log.d("Logic", "loadFromFile onPreExecute");
 			}
 			
@@ -2733,12 +2820,7 @@ public class Logic {
 			@Override
 			protected void onPostExecute(Integer result) {
 				Log.d("Logic", "loadFromFile onPostExecute");
-				try {
-					Application.mainActivity.dismissDialog(DialogFactory.PROGRESS_LOADING);
-				} catch (IllegalArgumentException e) {
-					 // Avoid crash if dialog is already dismissed
-					Log.d("Logic", "", e);
-				}
+				Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 				if (result.intValue() != READ_FAILED) {
 					Log.d("Logic", "loadfromFile: File read correctly");
 					View map = Application.mainActivity.getCurrentFocus();
@@ -2754,8 +2836,8 @@ public class Logic {
 							e1.printStackTrace();
 						}
 					}
-					Profile.updateStrokes(STROKE_FACTOR / viewBox.getWidth());
-					loadEditingState();
+					DataStyle.updateStrokes(STROKE_FACTOR / viewBox.getWidth());
+					loadEditingState(true);
 					
 					if (postLoad != null) {
 						postLoad.execute();
@@ -2801,7 +2883,7 @@ public class Logic {
 			@Override
 			protected Integer doInBackground(Context... c) {
 				this.context = c[0];
-				if (Application.getTaskStorage().readFromFile()) {
+				if (Application.getTaskStorage().readFromFile(context)) {
 					// viewBox.setBorders(getDelegator().getLastBox());
 					return Integer.valueOf(READ_OK);
 				} 
@@ -2844,19 +2926,14 @@ public class Logic {
 
 		int result = READ_FAILED;
 
-		Application.mainActivity.showDialog(DialogFactory.PROGRESS_LOADING);
+		Progress.showDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 
 		if (getDelegator().readFromFile()) {
 			viewBox.setBorders(getDelegator().getLastBox());
 			result = READ_OK;
 		} 
 
-		try {
-			Application.mainActivity.dismissDialog(DialogFactory.PROGRESS_LOADING);
-		} catch (IllegalArgumentException e) {
-			// Avoid crash if dialog is already dismissed
-			Log.d("Logic", "", e);
-		}
+		Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_LOADING);
 		if (result != READ_FAILED) {
 			Log.d("Logic", "syncLoadfromFile: File read correctly");
 			View map = Application.mainActivity.getCurrentFocus();
@@ -2872,8 +2949,8 @@ public class Logic {
 					e1.printStackTrace();
 				}
 			}
-			Profile.updateStrokes(STROKE_FACTOR / viewBox.getWidth());
-			loadEditingState();
+			DataStyle.updateStrokes(STROKE_FACTOR / viewBox.getWidth());
+			loadEditingState(true);
 			map.invalidate();
 			UndoStorage.updateIcon();
 			if (result == READ_BACKUP) { 
@@ -2887,23 +2964,6 @@ public class Logic {
 	}
 
 	/**
-	 * A small class to store the result returned from the OSM server after
-	 * trying to upload changes. The response includes things like the HTTP
-	 * response code, conflict information, etc.
-	 * 
-	 * Return not only the error code, but the element involved
-	 * 
-	 * @author simon
-	 */
-	public class UploadResult {
-		public int error = 0;
-		public int httpError = 0;
-		public String elementType;
-		public long osmId;
-		public String message;
-	}
-
-	/**
 	 * Uploads to the server in the background.
 	 * 
 	 * @param comment Changeset comment.
@@ -2911,13 +2971,16 @@ public class Logic {
 	 * @param closeChangeset Whether to close the changeset after upload or not.
 	 */
 	public void upload(final String comment, final String source, final boolean closeChangeset) {
+		final String PROGRESS_TAG = "data";
 		final Server server = prefs.getServer();
 		new AsyncTask<Void, Void, UploadResult>() {
 			
 			@Override
 			protected void onPreExecute() {
-				Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity,true);
+				Progress.showDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING, PROGRESS_TAG);
 				getDelegator().clearUndo();
+				lastComments.push(comment);
+				lastSources.push(source);
 			}
 			
 			@Override
@@ -2926,7 +2989,7 @@ public class Logic {
 				try {
 					server.getCapabilities(); // update status
 					if (!(server.apiAvailable() && server.writableDB())) {
-						result.error =  DialogFactory.API_OFFLINE;
+						result.error =  ErrorCodes.API_OFFLINE;
 						return result;
 					}
 					getDelegator().uploadToServer(server, comment, source, closeChangeset);
@@ -2942,23 +3005,23 @@ public class Logic {
 					result.httpError = e.getErrorCode();
 					result.message = e.getMessage();
 					switch (e.getErrorCode()) {
-					case HttpStatus.SC_UNAUTHORIZED:
-					case HttpStatus.SC_FORBIDDEN:
-						result.error = DialogFactory.WRONG_LOGIN;
+					case HttpURLConnection.HTTP_UNAUTHORIZED:
+					case HttpURLConnection.HTTP_FORBIDDEN:
+						result.error = ErrorCodes.INVALID_LOGIN;
 						break;
-					case HttpStatus.SC_CONFLICT:
-					case HttpStatus.SC_PRECONDITION_FAILED:
-						result.error = DialogFactory.UPLOAD_CONFLICT;
+					case HttpURLConnection.HTTP_CONFLICT:
+					case HttpURLConnection.HTTP_PRECON_FAILED:
+						result.error = ErrorCodes.UPLOAD_CONFLICT;
 						result.elementType = e.getElementType();
 						result.osmId = e.getElementId();
 						break;
-					case HttpStatus.SC_BAD_REQUEST:
-					case HttpStatus.SC_NOT_FOUND:
-					case HttpStatus.SC_GONE:
-					case HttpStatus.SC_INTERNAL_SERVER_ERROR:
-					case HttpStatus.SC_BAD_GATEWAY:
-					case HttpStatus.SC_SERVICE_UNAVAILABLE:
-						result.error = DialogFactory.UPLOAD_PROBLEM;
+					case HttpURLConnection.HTTP_BAD_REQUEST:
+					case HttpURLConnection.HTTP_NOT_FOUND:
+					case HttpURLConnection.HTTP_GONE:
+					case HttpURLConnection.HTTP_INTERNAL_ERROR:
+					case HttpURLConnection.HTTP_BAD_GATEWAY:
+					case HttpURLConnection.HTTP_UNAVAILABLE:
+						result.error = ErrorCodes.UPLOAD_PROBLEM;
 						break;
 					//TODO: implement other state handling
 					default:
@@ -2968,7 +3031,7 @@ public class Logic {
 						break;
 					}
 				} catch (final IOException e) {
-					result.error = DialogFactory.NO_CONNECTION;
+					result.error = ErrorCodes.NO_CONNECTION;
 					Log.e(DEBUG_TAG, "", e);
 				} catch (final NullPointerException e) {
 					Log.e(DEBUG_TAG, "", e);
@@ -2980,7 +3043,7 @@ public class Logic {
 			
 			@Override
 			protected void onPostExecute(UploadResult result) {
-				Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity,false);
+				Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING, PROGRESS_TAG);
 				if (result.error == 0) {
 					save(); // save now to avoid problems if it doesn't succeed later on, FIXME async or sync
 					Toast.makeText(Application.mainActivity.getApplicationContext(), R.string.toast_upload_success, Toast.LENGTH_SHORT).show();
@@ -2989,10 +3052,12 @@ public class Logic {
 				getDelegator().clearUndo();
 				Application.mainActivity.getCurrentFocus().invalidate();
 				if (!Application.mainActivity.isFinishing()) {
-					if (result.error == DialogFactory.UPLOAD_CONFLICT) {
-						DialogFactory.createUploadConflictDialog(Application.mainActivity, result).show();
+					if (result.error == ErrorCodes.UPLOAD_CONFLICT) {
+						UploadConflict.showDialog(Application.mainActivity, result);
+					} else if (result.error == ErrorCodes.INVALID_LOGIN) {
+						InvalidLogin.showDialog(Application.mainActivity);
 					} else if (result.error != 0) {
-						Application.mainActivity.showDialog(result.error);
+						ErrorAlert.showDialog(Application.mainActivity,result.error);
 					}
 				}
 			}
@@ -3016,7 +3081,7 @@ public class Logic {
 			
 			@Override
 			protected void onPreExecute() {
-				Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity,true);
+				Progress.showDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING);
 			}
 			
 			@Override
@@ -3034,20 +3099,20 @@ public class Logic {
 					ACRA.getErrorReporter().handleException(e);
 				} catch (final OsmServerException e) {
 					switch (e.getErrorCode()) {
-					case HttpStatus.SC_UNAUTHORIZED:
-						result = DialogFactory.WRONG_LOGIN;
+					case HttpURLConnection.HTTP_UNAUTHORIZED:
+						result = ErrorCodes.INVALID_LOGIN;
 						break;
-					case HttpStatus.SC_BAD_REQUEST:
-					case HttpStatus.SC_PRECONDITION_FAILED:
-					case HttpStatus.SC_CONFLICT:
-						result = DialogFactory.UPLOAD_PROBLEM;
+					case HttpURLConnection.HTTP_BAD_REQUEST:
+					case HttpURLConnection.HTTP_PRECON_FAILED:
+					case HttpURLConnection.HTTP_CONFLICT:
+						result = ErrorCodes.UPLOAD_PROBLEM;
 						break;
-					case HttpStatus.SC_NOT_FOUND:
-					case HttpStatus.SC_GONE:
-					case HttpStatus.SC_INTERNAL_SERVER_ERROR:
-					case HttpStatus.SC_BAD_GATEWAY:
-					case HttpStatus.SC_SERVICE_UNAVAILABLE:
-						result = DialogFactory.UPLOAD_PROBLEM;
+					case HttpURLConnection.HTTP_NOT_FOUND:
+					case HttpURLConnection.HTTP_GONE:
+					case HttpURLConnection.HTTP_INTERNAL_ERROR:
+					case HttpURLConnection.HTTP_BAD_GATEWAY:
+					case HttpURLConnection.HTTP_UNAVAILABLE:
+						result = ErrorCodes.UPLOAD_PROBLEM;
 						break;
 					//TODO: implement other state handling
 					default:
@@ -3057,32 +3122,36 @@ public class Logic {
 						break;
 					}
 				} catch (final IOException e) {
-					result = DialogFactory.NO_CONNECTION;
+					result = ErrorCodes.NO_CONNECTION;
 					Log.e(DEBUG_TAG, "", e);
 				} catch (final NullPointerException e) {
 					Log.e(DEBUG_TAG, "", e);
 					ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
 					ACRA.getErrorReporter().handleException(e);
 				} catch (IllegalArgumentException e) {
-					result = DialogFactory.UPLOAD_PROBLEM;
+					result = ErrorCodes.UPLOAD_PROBLEM;
 				} catch (IllegalStateException e) {
-					result = DialogFactory.UPLOAD_PROBLEM;
+					result = ErrorCodes.UPLOAD_PROBLEM;
 				} catch (XmlPullParserException e) {
-					result = DialogFactory.UPLOAD_PROBLEM;
+					result = ErrorCodes.UPLOAD_PROBLEM;
 				}
 				return result;
 			}
 			
 			@Override
 			protected void onPostExecute(Integer result) {
-				Util.setSupportProgressBarIndeterminateVisibility(Application.mainActivity,false);
+				Progress.dismissDialog(Application.mainActivity, Progress.PROGRESS_UPLOADING);
 				if (result == 0) {
 					Toast.makeText(Application.mainActivity.getApplicationContext(), R.string.toast_upload_success, Toast.LENGTH_SHORT).show();
 				}
 				Application.mainActivity.getCurrentFocus().invalidate();
 				if (result != 0) {
 					if (!Application.mainActivity.isFinishing()) {
-						Application.mainActivity.showDialog(result);
+						if (result == ErrorCodes.INVALID_LOGIN) {
+							InvalidLogin.showDialog(Application.mainActivity);
+						} else { 
+							ErrorAlert.showDialog(Application.mainActivity,result);
+						}
 					}
 				}
 			}
@@ -3217,7 +3286,7 @@ public class Logic {
 	 * Setter to a) set the internal value and b) push the value to {@link #map}.
 	 */
 	public synchronized void setSelectedRelation(final Relation selectedRelation) {
-		if (selectedRelations != null) {  // always restart
+		if (selectedRelation != null) {  // always restart
 			selectedRelations = new LinkedList<Relation>();
 			selectedRelations.add(selectedRelation);
 		} else {
@@ -3336,7 +3405,7 @@ public class Logic {
 	 */
 	boolean resyncSelected() {
 		boolean result = false;
-		if (selectedNodes != null && selectedNodes.size() > 0) {
+		if (selectedNodesCount() > 0) {
 			for (Node n:new ArrayList<Node>(selectedNodes)) {
 				if (!getDelegator().getCurrentStorage().contains(n)) {
 					selectedNodes.remove(n);
@@ -3344,7 +3413,7 @@ public class Logic {
 				}
 			}
 		}
-		if (selectedWays != null && selectedWays.size() > 0) {
+		if (selectedWaysCount() > 0) {
 			for (Way w:new ArrayList<Way>(selectedWays)) {
 				if (!getDelegator().getCurrentStorage().contains(w)) {
 					selectedWays.remove(w);
@@ -3352,7 +3421,7 @@ public class Logic {
 				}
 			}
 		}
-		if (selectedRelations != null && selectedRelations.size() > 0) {
+		if (selectedRelationsCount() > 0) {
 			for (Relation r:new ArrayList<Relation>(selectedRelations)) {
 				if (!getDelegator().getCurrentStorage().contains(r)) {
 					selectedRelations.remove(r);
@@ -3379,7 +3448,7 @@ public class Logic {
 	 */
 	public void setMap(Map map) {
 		this.map = map;
-		Profile.updateStrokes(Math.min(prefs.getMaxStrokeWidth(), strokeWidth(viewBox.getWidth())));
+		DataStyle.updateStrokes(Math.min(prefs.getMaxStrokeWidth(), strokeWidth(viewBox.getWidth())));
 		map.setDelegator(getDelegator());
 		map.setViewBox(viewBox);
 	}
@@ -3483,20 +3552,17 @@ public class Logic {
 	public Relation createRestriction(Way fromWay, OsmElement viaElement, Way toWay, String restriction_type) {
 		
 		createCheckpoint(R.string.undo_action_create_relation);
-		Relation restriction = getDelegator().createAndInsertRelation();
+		Relation restriction = getDelegator().createAndInsertRelation(null);
 		SortedMap<String,String> tags = new TreeMap<String,String>();
 		tags.put("restriction", restriction_type == null ? "" : restriction_type);
 		tags.put("type", "restriction");
 		getDelegator().setTags(restriction, tags);
 		RelationMember from = new RelationMember("from", fromWay);
-		restriction.addMember(from);
-		fromWay.addParentRelation(restriction);
+		getDelegator().addElementToRelation(from, restriction);
 		RelationMember via = new RelationMember("via", viaElement);
-		restriction.addMember(via);
-		viaElement.addParentRelation(restriction);
+		getDelegator().addElementToRelation(via, restriction);
 		RelationMember to = new RelationMember("to", toWay);
-		restriction.addMember(to);
-		toWay.addParentRelation(restriction);
+		getDelegator().addElementToRelation(to, restriction);
 		
 		return restriction;
 	}
@@ -3511,18 +3577,13 @@ public class Logic {
 	public Relation createRelation(String type, List<OsmElement> members ) {
 		
 		createCheckpoint(R.string.undo_action_create_relation);
-		Relation relation = getDelegator().createAndInsertRelation();
+		Relation relation = getDelegator().createAndInsertRelation(members);
 		SortedMap<String,String> tags = new TreeMap<String,String>();
 		if (type != null)
 			tags.put("type", type);
 		else
 			tags.put("type", "");
 		getDelegator().setTags(relation, tags);
-		for (OsmElement e:members) {
-			RelationMember rm = new RelationMember("", e);
-			relation.addMember(rm);
-			e.addParentRelation(relation);
-		}
 		return relation;
 	}
 	
@@ -3568,16 +3629,18 @@ public class Logic {
 	 * @param r
 	 */
 	public void selectRelation(Relation r) {
-		for (RelationMember rm : r.getMembers()) {
-			OsmElement e = rm.getElement();
-			if (e != null) {
-				if (e.getName().equals(Way.NAME)) {
-					addSelectedRelationWay((Way) e);
-				} else if (e.getName().equals(Node.NAME)) {
-					addSelectedRelationNode((Node) e);
-				} else if (e.getName().equals(Relation.NAME) && (selectedRelationRelations == null || !selectedRelationRelations.contains((Relation)e))) { // break recursion if already selected
-					addSelectedRelationRelation((Relation) e);
-				} 
+		if (r!=null) {
+			for (RelationMember rm : r.getMembers()) {
+				OsmElement e = rm.getElement();
+				if (e != null) {
+					if (e.getName().equals(Way.NAME)) {
+						addSelectedRelationWay((Way) e);
+					} else if (e.getName().equals(Node.NAME)) {
+						addSelectedRelationNode((Node) e);
+					} else if (e.getName().equals(Relation.NAME) && (selectedRelationRelations == null || !selectedRelationRelations.contains((Relation)e))) { // break recursion if already selected
+						addSelectedRelationRelation((Relation) e);
+					} 
+				}
 			}
 		}
 	}
@@ -3641,6 +3704,13 @@ public class Logic {
 		return selectedRelationRelations;
 	}
 	
+	public void deselectAll() {
+		setSelectedNode(null);
+		setSelectedWay(null);
+		setSelectedRelation(null);
+		setSelectedRelationNodes(null);
+		setSelectedRelationWays(null);
+	}
 	
 	public void fixElementWithConflict(long newVersion, OsmElement elementLocal, OsmElement elementOnServer) {
 		createCheckpoint(R.string.undo_action_fix_conflict);
@@ -3909,5 +3979,55 @@ public class Logic {
 	 */
 	public BoundingBox getViewBox() {
 		return viewBox;
+	}
+
+	/**
+	 * Return the last used comment
+	 * @return comment
+	 */
+	public String getLastComment() {
+		return lastComments.last();
+	}
+
+	/**
+	 * Return the last used comments index 0 is the most recent one
+	 * @return ArrayList of the comments
+	 */
+	public ArrayList<String> getLastComments() {
+		return lastComments;
+	}
+
+	/**
+	 * Set the list of last comments
+	 * @param comments
+	 */
+	public void setLastComments(ArrayList<String> comments) {
+		lastComments = new MRUList<String>(comments);
+		lastComments.ensureCapacity(MRULIST_SIZE);
+	}
+
+	/**
+	 * Return the last used source string
+	 * @return source
+	 */
+	public String getLastSource() {
+		return lastSources.last();
+	}
+	
+	/**
+	 * Return the last used source strings index 0 is the most recent one
+	 * @return ArrayList of the source strings
+	 */
+	public ArrayList<String> getLastSources() {
+		return lastSources;
+	}
+	
+	/**
+	 * Set the list of last used source strings
+	 * @param sources
+	 */
+	public void setLastSources(ArrayList<String> sources) {
+		lastSources = new MRUList<String>(sources);
+		lastSources.ensureCapacity(MRULIST_SIZE);
 	}
 }

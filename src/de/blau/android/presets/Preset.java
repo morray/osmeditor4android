@@ -11,17 +11,13 @@ import java.io.InvalidObjectException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
-import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
@@ -40,15 +36,14 @@ import org.xml.sax.AttributeList;
 import org.xml.sax.HandlerBase;
 import org.xml.sax.SAXException;
 
-import ch.poole.poparser.Po;
-import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.support.v4.content.ContextCompat;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.TypedValue;
@@ -59,19 +54,18 @@ import android.view.View.OnLongClickListener;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.BaseAdapter;
-import android.widget.LinearLayout;
-import android.widget.RelativeLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import ch.poole.poparser.Po;
 import de.blau.android.Application;
 import de.blau.android.R;
 import de.blau.android.osm.Node;
-import de.blau.android.osm.Relation;
-import de.blau.android.osm.Way;
 import de.blau.android.osm.OsmElement.ElementType;
+import de.blau.android.osm.Relation;
+import de.blau.android.osm.Tags;
+import de.blau.android.osm.Way;
 import de.blau.android.prefs.AdvancedPrefDatabase;
 import de.blau.android.prefs.PresetEditorActivity;
-import de.blau.android.resources.Profile;
 import de.blau.android.util.Hash;
 import de.blau.android.util.MultiHashMap;
 import de.blau.android.util.SearchIndexUtils;
@@ -118,7 +112,7 @@ public class Preset implements Serializable {
 	/**
 	 * 
 	 */
-	private static final long serialVersionUID = 3L;
+	private static final long serialVersionUID = 7L;
 	/** name of the preset XML file in a preset directory */
 	public static final String PRESETXML = "preset.xml";
 	/** name of the MRU serialization file in a preset directory */
@@ -166,6 +160,17 @@ public class Preset implements Serializable {
 		 */
 		CHECK
 	}
+	
+	public static enum MatchType {
+		NONE,
+		KEY,
+		KEY_NEG,
+		KEY_VALUE,
+		KEY_VALUE_NEG,
+	}
+	
+	public final static String COMBO_DELIMITER = ",";
+	public final static String MULTISELECT_DELIMITER = ";";
 
 	/** Maps all possible keys to the respective values for autosuggest (only key/values applying to nodes) */
 	protected final MultiHashMap<String, StringWithDescription> autosuggestNodes = new MultiHashMap<String, StringWithDescription>(true);
@@ -173,6 +178,8 @@ public class Preset implements Serializable {
 	protected final MultiHashMap<String, StringWithDescription> autosuggestWays = new MultiHashMap<String, StringWithDescription>(true);
 	/** Maps all possible keys to the respective values for autosuggest (only key/values applying to closed ways) */
 	protected final MultiHashMap<String, StringWithDescription> autosuggestClosedways = new MultiHashMap<String, StringWithDescription>(true);
+	/** Maps all possible keys to the respective values for autosuggest (only key/values applying to areas (MPs)) */
+	protected final MultiHashMap<String, StringWithDescription> autosuggestAreas = new MultiHashMap<String, StringWithDescription>(true);
 	/** Maps all possible keys to the respective values for autosuggest (only key/values applying to closed ways) */
 	protected final MultiHashMap<String, StringWithDescription> autosuggestRelations = new MultiHashMap<String, StringWithDescription>(true);
 	
@@ -315,6 +322,13 @@ public class Preset implements Serializable {
         // in practice, it does read the full file, which means this gives the actual sha256 of the file,
         //  - even if you add a 1 MB comment after the document-closing tag.
         
+        // remove chunks - this messes up the index disabled for now
+//        for (PresetItem c:new ArrayList<PresetItem>(allItems)) {
+//        	if (c.isChunk()) {
+//        		allItems.remove(c);
+//        	}
+//        }
+        
         mru = initMRU(directory, hashValue);
         
 //        for (String k:searchIndex.getKeys()) {
@@ -361,6 +375,8 @@ public class Preset implements Serializable {
         	/** store current combo or multiselect key */
         	private String listKey = null;
         	private ArrayList<StringWithDescription> listValues = null;
+        	private String mainValueContext = null;
+        	private String delimiter = null;
         	
         	{
         		groupstack.push(rootGroup);
@@ -398,26 +414,55 @@ public class Preset implements Serializable {
             			type = attr.getValue("gtype"); // note gtype seems to be undocumented
             		}
                 	currentItem = new PresetItem(null, attr.getValue("id"), attr.getValue("icon"), type);
+                	currentItem.setChunk();
             	} else if ("separator".equals(name)) {
             		new PresetSeparator(groupstack.peek());
             	} else if ("optional".equals(name)) {
             		inOptionalSection = true;
             	} else if ("key".equals(name)) {
+            		String key = attr.getValue("key");
+            		String match = attr.getValue("match");
             		if (!inOptionalSection) {
-            			currentItem.addTag(attr.getValue("key"), PresetKeyType.TEXT, attr.getValue("value"), attr.getValue("text"));
+            			 if ("none".equals(match)) {// don't include in fixed tags if not used for matching
+            				 currentItem.addTag(false, key, PresetKeyType.TEXT, attr.getValue("value"));
+            			 } else {
+            				 currentItem.addTag(key, PresetKeyType.TEXT, attr.getValue("value"), attr.getValue("text"));
+            			 }
             		} else {
             			// Optional fixed tags should not happen, their values will NOT be automatically inserted.
-            			currentItem.addTag(true, attr.getValue("key"), PresetKeyType.TEXT, attr.getValue("value"));
+            			currentItem.addTag(true, key, PresetKeyType.TEXT, attr.getValue("value"));
+            		}
+            		if (match != null) {
+            			currentItem.setMatchType(key,match);
+            		}
+            		String textContext = attr.getValue("text_context");
+            		if (textContext != null) {
+            			currentItem.setTextContext(key,textContext);
             		}
             	} else if ("text".equals(name)) {
-            		currentItem.addTag(inOptionalSection, attr.getValue("key"), PresetKeyType.TEXT, (String)null);
+            		String key = attr.getValue("key");
+            		currentItem.addTag(inOptionalSection, key, PresetKeyType.TEXT, (String)null);
             		String text = attr.getValue("text");
             		if (text != null) {
             			currentItem.addHint(attr.getValue("key"),text);
             		}
+            		String textContext = attr.getValue("text_context");
+            		if (textContext != null) {
+            			currentItem.setTextContext(key,textContext);
+            		}
+              		String match = attr.getValue("match");
+            		if (match != null) {
+            			currentItem.setMatchType(key,match);
+            		}
             	} else if ("link".equals(name)) {
-            		currentItem.setMapFeatures(attr.getValue("href")); // just English for now
+            		String language = Locale.getDefault().getLanguage();
+            		String href = attr.getValue(language.toLowerCase(Locale.US)+".href");
+            		if (href==null) {
+            			href = attr.getValue("href");
+            		}
+            		currentItem.setMapFeatures(href); 
             	} else if ("check".equals(name)) {
+            		String key = attr.getValue("key");
             		String value_on = attr.getValue("value_on") == null ? "yes" : attr.getValue("value_on");
             		String value_off = attr.getValue("value_off") == null ? "no" : attr.getValue("value_off");
             		String disable_off = attr.getValue("disable_off");
@@ -426,77 +471,120 @@ public class Preset implements Serializable {
             		if (disable_off != null && disable_off.equals("true")) {
             			value_off = "";
             		} else {
-            			values = "," + value_off;
+            			values = value_on + COMBO_DELIMITER + value_off;
             		}
-             		currentItem.addTag(inOptionalSection, attr.getValue("key"), PresetKeyType.CHECK, values);
+             		currentItem.addTag(inOptionalSection, key, PresetKeyType.CHECK, values);
+             		if (!"yes".equals(value_on)) {
+             			currentItem.addOnValue(key,value_on);
+             		}
             		String defaultValue = attr.getValue("default") == null ? value_off : (attr.getValue("default").equals("on") ? value_on : value_off);
             		if (defaultValue != null) {
-            			currentItem.addDefault(attr.getValue("key"),defaultValue);
+            			currentItem.addDefault(key,defaultValue);
             		}
                		String text = attr.getValue("text");
             		if (text != null) {
-            			currentItem.addHint(attr.getValue("key"),text);
+            			currentItem.addHint(key,text);
             		}
-            	} else if ("combo".equals(name)) {
-            		String delimiter = attr.getValue("delimiter");
+            		String textContext = attr.getValue("text_context");
+            		if (textContext != null) {
+            			currentItem.setTextContext(key,textContext);
+            		}
+              		String match = attr.getValue("match");
+            		if (match != null) {
+            			currentItem.setMatchType(key,match);
+            		}
+            	} else if ("combo".equals(name) || "multiselect".equals(name)) {
+            		boolean multiselect = "multiselect".equals(name);
+            		String key = attr.getValue("key");
+            		delimiter = attr.getValue("delimiter");
             		if (delimiter == null) {
-            			delimiter = ","; // combo uses "," as default
+            			delimiter = multiselect ? MULTISELECT_DELIMITER : COMBO_DELIMITER; 
             		}
-            		String comboValues = attr.getValue("values");
-            		if (comboValues != null) {
-            			currentItem.addTag(inOptionalSection, attr.getValue("key"), PresetKeyType.COMBO, comboValues, delimiter);
+            		String values = attr.getValue("values");
+            		String displayValues = attr.getValue("display_values");
+            		String shortDescriptions = attr.getValue("short_descriptions");
+            		if (values != null) {
+            			currentItem.addTag(inOptionalSection, key, multiselect ? PresetKeyType.MULTISELECT : PresetKeyType.COMBO, 
+            					values, displayValues, shortDescriptions, delimiter);
             		} else {
-            			listKey = attr.getValue("key");
+            			listKey = key;
             			listValues = new ArrayList<StringWithDescription>();
+            		}
+            		mainValueContext = attr.getValue("values_context");
+            		if (mainValueContext != null) {
+            			currentItem.setTextContext(key,mainValueContext);
             		}
             		String defaultValue = attr.getValue("default");
             		if (defaultValue != null) {
-            			currentItem.addDefault(attr.getValue("key"),defaultValue);
+            			currentItem.addDefault(key,defaultValue);
             		}
                		String text = attr.getValue("text");
             		if (text != null) {
-            			currentItem.addHint(attr.getValue("key"),text);
+            			currentItem.addHint(key, text);
             		}
-            	} else if ("multiselect".equals(name)) {
-            		String delimiter = attr.getValue("delimiter");
-            		if (delimiter == null) {
-            			delimiter = ";"; // multiselect uses ";" as default
+            		String textContext = attr.getValue("text_context");
+            		if (textContext != null) {
+            			currentItem.setTextContext(key,textContext);
             		}
-            		String multiselectValues = attr.getValue("values");
-            		if (multiselectValues != null) {
-            			currentItem.addTag(inOptionalSection, attr.getValue("key"), PresetKeyType.MULTISELECT, multiselectValues, delimiter); 
-            		} else {
-            			listKey = attr.getValue("key");
-            			listValues = new ArrayList<StringWithDescription>();
+              		String match = attr.getValue("match");
+            		if (match != null) {
+            			currentItem.setMatchType(key,match);
             		}
-            		String defaultValue = attr.getValue("default");
-            		if (defaultValue != null) {
-            			currentItem.addDefault(attr.getValue("key"),defaultValue);
+             		String sort = attr.getValue("values_sort");
+            		if (sort != null) {
+            			currentItem.setSort(key,"yes".equals(sort) || "true".equals(sort)); // normally this will not be set because true is the default
             		}
-               		String text = attr.getValue("text");
-            		if (text != null) {
-            			currentItem.addHint(attr.getValue("key"),text);
+             		String editable = attr.getValue("editable");
+            		if (editable != null) {
+            			currentItem.setEditable(key,"yes".equals(editable) || "true".equals(editable));
             		}
             	} else if ("role".equals(name)) {
-            		currentItem.addRole(attr.getValue("key")); 
+            		String key = attr.getValue("key");
+            		String text = attr.getValue("text");
+               		String textContext = attr.getValue("text_context");
+            		if (textContext != null) {
+            			currentItem.setTextContext(key,textContext);
+            		}
+            		currentItem.addRole(new StringWithDescription(key, po != null && text != null ? (textContext!=null?po.t(textContext,text):po.t(text)) : text));
             	} else if ("reference".equals(name)) {
             		PresetItem chunk = chunks.get(attr.getValue("ref")); // note this assumes that there are no forward references
             		if (chunk != null) {
             			currentItem.fixedTags.putAll(chunk.getFixedTags());
+            			if (!currentItem.isChunk()) {
+            				for (Entry<String,StringWithDescription> e:chunk.getFixedTags().entrySet()) {
+            					StringWithDescription v = e.getValue();
+            					String value = "";
+            					if (v != null && v.getValue() != null) {
+            						value = v.getValue();
+            					}
+            					tagItems.add(e.getKey()+"\t"+value, currentItem);
+            				}
+            			}
             			currentItem.optionalTags.putAll(chunk.getOptionalTags());
+            			addToTagItems(currentItem, chunk.getOptionalTags());
+            			
             			currentItem.recommendedTags.putAll(chunk.getRecommendedTags());
+            			addToTagItems(currentItem, chunk.getRecommendedTags());
+               			
             			currentItem.hints.putAll(chunk.hints);
-            			currentItem.defaults.putAll(chunk.defaults);
+            			currentItem.addAllDefaults(chunk.defaults);
             			currentItem.keyType.putAll(chunk.keyType);
-            			currentItem.roles.addAll(chunk.roles); // FIXME this and the following could lead to duplicate entries
-            			currentItem.linkedPresetNames.addAll(chunk.linkedPresetNames);
+            			currentItem.setAllMatchTypes(chunk.matchType);
+            			currentItem.addAllRoles(chunk.roles); // FIXME this and the following could lead to duplicate entries
+            			currentItem.addAllLinkedPresetNames(chunk.linkedPresetNames);
+            			currentItem.setAllSort(chunk.sort);
+            			currentItem.setAllEditable(chunk.editable);
+            			currentItem.addAllDelimiters(chunk.delimiters);
             		}
             	} else if ("list_entry".equals(name)) {
             		if (listValues != null) {
             			String v = attr.getValue("value");
             			if (v != null) {
-            				String d = attr.getValue("short_description");
-            				listValues.add(new StringWithDescription(v,po != null ? po.t(d):d));
+            				String d = attr.getValue("display_value");
+            				if (d == null) {
+            					d = attr.getValue("short_description");
+            				}
+            				listValues.add(new StringWithDescription(v,po != null ? (mainValueContext != null?po.t(mainValueContext,d):po.t(d)):d));
             			}
             		}
             	} else if ("preset_link".equals(name)) {
@@ -506,6 +594,24 @@ public class Preset implements Serializable {
             		}
             	}
             }
+			
+			void addToTagItems(PresetItem currentItem, Map<String,StringWithDescription[]>tags) {
+				if (currentItem.isChunk()) { // only do this on the final expansion
+					return;
+				}
+      			for (Entry<String,StringWithDescription[]> e:tags.entrySet()) {
+    				StringWithDescription values[] = e.getValue();
+    				if (values != null) {
+    					for (StringWithDescription v:values) {
+    						String value = "";
+    						if (v != null && v.getValue() != null) {
+    							value = v.getValue();
+    						}
+    						tagItems.add(e.getKey()+"\t"+value, currentItem);
+    					}
+    				}
+    			}
+			}
             
             @Override
             public void endElement(String name) throws SAXException {
@@ -529,7 +635,7 @@ public class Preset implements Serializable {
             			StringWithDescription[] v = new StringWithDescription[listValues.size()];
             			currentItem.addTag(inOptionalSection, 
             					listKey, "combo".equals(name)?PresetKeyType.COMBO:PresetKeyType.MULTISELECT, 
-            					listValues.toArray(v));
+            					listValues.toArray(v), delimiter);
             		}
             		listKey = null;
             		listValues = null;
@@ -553,10 +659,10 @@ public class Preset implements Serializable {
         	if (!tmpMRU.presetHash.equals(hashValue)) throw new InvalidObjectException("hash mismatch");
         } catch (Exception e) {
         	tmpMRU = new PresetMRUInfo(hashValue);
-        	// Unserialization failed for whatever reason (missing file, wrong version, ...) - use empty list
+        	// Deserialization failed for whatever reason (missing file, wrong version, ...) - use empty list
         	Log.i("Preset", "No usable old MRU list, creating new one ("+e.toString()+")");
         } finally {
-				try { if (mruReader != null) mruReader.close(); } catch (Exception e) {} // ignore IO exceptions
+			try { if (mruReader != null) mruReader.close(); } catch (Exception e) {} // ignore IO exceptions
         }
     	return tmpMRU;
 	}
@@ -614,10 +720,14 @@ public class Preset implements Serializable {
 	public Integer getItemIndexByName(String name) {
 		Log.d("Preset","getItemIndexByName " + name);
 		for (PresetItem pi:allItems) {
-			if (pi.getName().equals(name)) {
-				return Integer.valueOf(pi.getItemIndex());
+			if (pi != null) {
+				String n = pi.getName();
+				if (n != null && n.equals(name)) {
+					return Integer.valueOf(pi.getItemIndex());
+				}
 			}
 		}
+		Log.d("Preset","getItemIndexByName " + name + " not found");
 		return null;
 	}
 	
@@ -654,20 +764,22 @@ public class Preset implements Serializable {
 		if (!mru.recentPresets.remove(id)) { // calling remove(Object), i.e. removing the number if it is in the list, not the i-th item
 			// preset is not in the list, add linked presets first
 			PresetItem pi = allItems.get(id.intValue());
-			LinkedList<String>linkedPresetNames = new LinkedList<String>(pi.linkedPresetNames);
-			Collections.reverse(linkedPresetNames);
-			for (String n:linkedPresetNames) {
-				if (!mru.recentPresets.contains(id)) {
-					Integer presetIndex = getItemIndexByName(n);
-					if (presetIndex != null) {  // null if the link wasn't found
-						if (!mru.recentPresets.contains(presetIndex)) { // only add if not already present
-							mru.recentPresets.addFirst(presetIndex);
-							if (mru.recentPresets.size() > MAX_MRU_SIZE) {
-								mru.recentPresets.removeLast();
+			if (pi.getLinkedPresetNames() != null) {
+				LinkedList<String>linkedPresetNames = new LinkedList<String>(pi.getLinkedPresetNames());
+				Collections.reverse(linkedPresetNames);
+				for (String n:linkedPresetNames) {
+					if (!mru.recentPresets.contains(id)) {
+						Integer presetIndex = getItemIndexByName(n);
+						if (presetIndex != null) {  // null if the link wasn't found
+							if (!mru.recentPresets.contains(presetIndex)) { // only add if not already present
+								mru.recentPresets.addFirst(presetIndex);
+								if (mru.recentPresets.size() > MAX_MRU_SIZE) {
+									mru.recentPresets.removeLast();
+								}
 							}
+						} else {
+							Log.e("Preset","linked preset not found for " + n + " in preset " + pi.getName());
 						}
-					} else {
-						Log.e("Preset","linked preset not found for " + n + " in preset " + pi.getName());
 					}
 				}
 			}
@@ -718,7 +830,9 @@ public class Preset implements Serializable {
     public String toJSON() {
     	String result = "";
     	for (PresetItem pi:allItems) {
-    		result = result + pi.toJSON();
+    		if (!pi.isChunk()) {
+    			result = result + pi.toJSON();
+    		}
     	}
     	return result;
     }
@@ -736,39 +850,60 @@ public class Preset implements Serializable {
 	 * @return null, or the "best" matching item for the given tag set
 	 */
     static public PresetItem findBestMatch(Preset presets[], Map<String,String> tags) {
-	
+    	return findBestMatch(presets, tags, false);
+    }
+    
+    static public PresetItem findBestMatch(Preset presets[], Map<String,String> tags, boolean useAddressKeys) {
 		int bestMatchStrength = 0;
 		PresetItem bestMatch = null;
 		
 		if (tags==null || presets==null) {
-			Log.e("Preset", "findBestMatch " + (tags==null?"tags null":"presets null"));
+			Log.e(DEBUG_TAG, "findBestMatch " + (tags==null?"tags null":"presets null"));
 			return null;
 		}
 		
 		// Build candidate list
 		LinkedHashSet<PresetItem> possibleMatches = new LinkedHashSet<PresetItem>();
-		for (Preset p:presets) {
-			if (p != null) {
-				for (Entry<String, String> tag : tags.entrySet()) {
-					String tagString = tag.getKey()+"\t"+tag.getValue();
-					possibleMatches.addAll(p.tagItems.get(tagString));
+		boolean reallyUseAddressKeys = false;
+		do {
+			for (Preset p:presets) {
+				if (p != null) {
+					for (Entry<String, String> tag : tags.entrySet()) {
+						String kew = tag.getKey();
+						if (!kew.startsWith(Tags.KEY_ADDR_BASE) || reallyUseAddressKeys) {
+							String tagString = tag.getKey()+"\t";
+							possibleMatches.addAll(p.tagItems.get(tagString)); // for stuff that doesn't have fixed values
+							possibleMatches.addAll(p.tagItems.get(tagString+tag.getValue()));
+						}
+					}
 				}
 			}
-		}
+
+			// if we only have address keys retry
+			if (useAddressKeys && possibleMatches.size() == 0 && !reallyUseAddressKeys) {
+				reallyUseAddressKeys = true;
+			}  else {
+				break;
+			}
+		} while (true);
+		
 		// Find best
+		final int FIXED_WEIGHT = 100; // always prioritize presets with fixed keys
 		for (PresetItem possibleMatch : possibleMatches) {
-			if ((possibleMatch.getFixedTagCount() <= bestMatchStrength) && (possibleMatch.getRecommendedTags().size()) <= bestMatchStrength) continue; // isn't going to help
-			if (possibleMatch.getFixedTagCount() > 0) { // has required tags			
+			int fixedTagCount = possibleMatch.getFixedTagCount()*FIXED_WEIGHT;
+			if (fixedTagCount + possibleMatch.getRecommendedTags().size() < bestMatchStrength) continue; // isn't going to help
+			int matches = 0;
+			if (fixedTagCount > 0) { // has required tags
 				if (possibleMatch.matches(tags)) {
-					bestMatch = possibleMatch;
-					bestMatchStrength = bestMatch.getFixedTagCount();
+					matches = fixedTagCount;
 				}
-			} else if (possibleMatch.getRecommendedTags().size() > 0) {
-				int matches = possibleMatch.matchesRecommended(tags);
-				if (matches > bestMatchStrength) {
-					bestMatch = possibleMatch;
-					bestMatchStrength = matches;
-				}
+			} 
+			if (possibleMatch.getRecommendedTags().size() > 0) { 
+				matches = matches + possibleMatch.matchesRecommended(tags);
+			}
+			if (matches > bestMatchStrength) {
+				bestMatch = possibleMatch;
+				bestMatchStrength = matches;
 			}
 		}
 		// Log.d(DEBUG_TAG,"findBestMatch " + bestMatch);
@@ -790,7 +925,7 @@ public class Preset implements Serializable {
 				filteredElements.add(e);
 			} else if ((e instanceof PresetSeparator) && !filteredElements.isEmpty() &&
 					!(filteredElements.get(filteredElements.size()-1) instanceof PresetSeparator)) {
-				// add separators iff there is a non-separator element above them
+				// add separators if there is a non-separator element above them
 				filteredElements.add(e);
 			}
 		}
@@ -816,6 +951,7 @@ public class Preset implements Serializable {
 		protected boolean appliesToNode;
 		protected boolean appliesToClosedway;
 		protected boolean appliesToRelation;
+		protected boolean appliesToArea;
 		private String mapFeatures;
 
 		/**
@@ -899,16 +1035,16 @@ public class Preset implements Serializable {
 			TextView v = new TextView(ctx);
 			float density = res.getDisplayMetrics().density;
 			v.setText(getTranslatedName());
-			v.setTextColor(res.getColor(R.color.preset_text));
+			v.setTextColor(ContextCompat.getColor(ctx,R.color.preset_text));
 			v.setTextSize(TypedValue.COMPLEX_UNIT_SP,10);
 			v.setEllipsize(TextUtils.TruncateAt.END);
 			v.setMaxLines(2);
 			v.setPadding((int)(4*density), (int)(4*density), (int)(4*density), (int)(4*density));
 			// v.setBackgroundDrawable(shape);
 			if (this instanceof PresetGroup) {
-				v.setBackgroundColor(res.getColor(R.color.dark_grey));
+				v.setBackgroundColor(ContextCompat.getColor(ctx,R.color.dark_grey));
 			} else {
-				v.setBackgroundColor(res.getColor(R.color.preset_bg));
+				v.setBackgroundColor(ContextCompat.getColor(ctx,R.color.preset_bg));
 			}
 			Drawable icon = getIcon();
 			if (icon != null) {
@@ -938,12 +1074,13 @@ public class Preset implements Serializable {
 				case WAY: return appliesToWay;
 				case CLOSEDWAY: return appliesToClosedway;
 				case RELATION: return appliesToRelation;
+				case AREA: return appliesToArea;
 			}
 			return true; // should never happen
 		}
 
 		/**
-		 * Recursivly sets the flag indicating that this element is relevant for nodes
+		 * Recursively sets the flag indicating that this element is relevant for nodes
 		 */
 		protected void setAppliesToNode() {
 			if (!appliesToNode) {
@@ -953,7 +1090,7 @@ public class Preset implements Serializable {
 		}
 		
 		/**
-		 * Recursivly sets the flag indicating that this element is relevant for nodes
+		 * Recursively sets the flag indicating that this element is relevant for nodes
 		 */
 		protected void setAppliesToWay() {
 			if (!appliesToWay) {
@@ -963,7 +1100,7 @@ public class Preset implements Serializable {
 		}
 		
 		/**
-		 * Recursivly sets the flag indicating that this element is relevant for nodes
+		 * Recursively sets the flag indicating that this element is relevant for nodes
 		 */
 		protected void setAppliesToClosedway() {
 			if (!appliesToClosedway) {
@@ -973,12 +1110,22 @@ public class Preset implements Serializable {
 		}
 		
 		/**
-		 * Recursivly sets the flag indicating that this element is relevant for nodes
+		 * Recursively sets the flag indicating that this element is relevant for relations
 		 */
 		protected void setAppliesToRelation() {
 			if (!appliesToRelation) {
 				appliesToRelation = true;
 				if (parent != null) parent.setAppliesToRelation();
+			}
+		}
+		
+		/**
+		 * Recursively sets the flag indicating that this element is relevant for an area
+		 */
+		protected void setAppliesToArea() {
+			if (!appliesToArea) {
+				appliesToArea = true;
+				if (parent != null) parent.setAppliesToArea();
 			}
 		}
 		
@@ -998,7 +1145,7 @@ public class Preset implements Serializable {
 		
 		@Override
 		public String toString() {
-			return name + " " + iconpath + " " + mapiconpath + " " + appliesToWay + " " + appliesToNode + " " + appliesToClosedway + " " + appliesToRelation;
+			return name + " " + iconpath + " " + mapiconpath + " " + appliesToWay + " " + appliesToNode + " " + appliesToClosedway + " " + appliesToRelation + " " + appliesToArea;
 		}
 	}
 	
@@ -1085,7 +1232,7 @@ public class Preset implements Serializable {
 			WrappingLayout wrappingLayout = new WrappingLayout(ctx);
 			float density = ctx.getResources().getDisplayMetrics().density;
 			// wrappingLayout.setBackgroundColor(ctx.getResources().getColor(android.R.color.white));
-			wrappingLayout.setBackgroundColor(ctx.getResources().getColor(android.R.color.transparent)); // make transparent
+			wrappingLayout.setBackgroundColor(ContextCompat.getColor(ctx,android.R.color.transparent)); // make transparent
 			wrappingLayout.setHorizontalSpacing((int)(SPACING*density));
 			wrappingLayout.setVerticalSpacing((int)(SPACING*density));
 			ArrayList<PresetElement> filteredElements = type == null ? elements : filterElements(elements, type);
@@ -1097,7 +1244,6 @@ public class Preset implements Serializable {
 			scrollView.addView(wrappingLayout);
 			return scrollView;
 		}
-
 	}
 	
 	/** Represents a preset item (e.g. "footpath", "grocery store") */
@@ -1105,7 +1251,7 @@ public class Preset implements Serializable {
 		/**
 		 * 
 		 */
-		private static final long serialVersionUID = 4L;
+		private static final long serialVersionUID = 9L;
 
 		/** "fixed" tags, i.e. the ones that have a fixed key-value pair */
 		private LinkedHashMap<String, StringWithDescription> fixedTags = new LinkedHashMap<String, StringWithDescription>();
@@ -1121,22 +1267,32 @@ public class Preset implements Serializable {
 		/**
 		 * Hints to be displayed in a suitable form
 		 */
-		private LinkedHashMap<String, String> hints = new LinkedHashMap<String, String>();
+		private HashMap<String, String> hints = new HashMap<String, String>();
 		
 		/**
 		 * Default values
 		 */
-		private LinkedHashMap<String, String> defaults = new LinkedHashMap<String, String>();
+		private HashMap<String, String> defaults = null;
+		
+		/**
+		 * Non standard on values
+		 */
+		private HashMap<String, String> onValue = null;
 		
 		/**
 		 * Roles
 		 */
-		private LinkedList<String> roles =  new LinkedList<String>();
+		private LinkedList<StringWithDescription> roles = null;
 		
 		/**
 		 * Linked names of presets
 		 */
-		private LinkedList<String> linkedPresetNames = new LinkedList<String>();
+		private LinkedList<String> linkedPresetNames = null;
+		
+		/**
+		 * Sort values or not
+		 */
+		private HashMap<String,Boolean> sort  = null;
 		
 		/**
 		 * Key to key type
@@ -1144,11 +1300,31 @@ public class Preset implements Serializable {
 		private HashMap<String,PresetKeyType> keyType = new HashMap<String,PresetKeyType>(); 
 		
 		/**
+		 * Key to match properties
+		 */
+		private HashMap<String,MatchType> matchType = null; 
+		
+		/**
+		 * Key to combo and multiselect delimiters
+		 */
+		private HashMap<String,String> delimiters = null; 
+		
+		/**
+		 * Key to combo and multiselect editable property
+		 */
+		private HashMap<String,Boolean> editable = null; 
+		
+		/**
 		 * Translation contexts
 		 */
-		private String nameContext = null;
-		private String valueContext = null;
+		private HashMap<String,String> textContext = null;
+		private HashMap<String,String> valueContext = null;
 		
+		
+		/**
+		 * true if a chunk
+		 */
+		private boolean chunk = false;
 		
 		private int itemIndex;
 
@@ -1160,12 +1336,15 @@ public class Preset implements Serializable {
 				setAppliesToWay();
 				setAppliesToClosedway();
 				setAppliesToRelation();
+				setAppliesToArea();
 			} else {
 				String[] typesArray = types.split(",");
 				for (String type : typesArray) {
 					if (Node.NAME.equals(type)) setAppliesToNode();
 					else if (Way.NAME.equals(type)) setAppliesToWay();
-					else if ("closedway".equals(type)) setAppliesToClosedway();
+					else if ("closedway".equals(type)) setAppliesToClosedway(); // FIXME don't add if it really an area
+					else if ("multipolygon".equals(type)) setAppliesToArea();
+					else if ("area".equals(type)) setAppliesToArea(); // 
 					else if (Relation.NAME.equals(type)) setAppliesToRelation();
 				}
 			}	
@@ -1232,13 +1411,16 @@ public class Preset implements Serializable {
 				text = po.t(text);
 			}
 			fixedTags.put(key, new StringWithDescription(value, text));
-			tagItems.add(key+"\t"+value, this);
+			if (!chunk) {
+				tagItems.add(key+"\t"+value, this);
+			}
 			// Log.d(DEBUG_TAG,name + " key " + key + " type " + type);
 			keyType.put(key,type);
 			if (appliesTo(ElementType.NODE)) autosuggestNodes.add(key, value.length() > 0 ? new StringWithDescription(value, text) : null);
 			if (appliesTo(ElementType.WAY)) autosuggestWays.add(key, value.length() > 0 ? new StringWithDescription(value, text) : null);
 			if (appliesTo(ElementType.CLOSEDWAY)) autosuggestClosedways.add(key, value.length() > 0 ? new StringWithDescription(value, text) : null);
 			if (appliesTo(ElementType.RELATION)) autosuggestRelations.add(key, value.length() > 0 ? new StringWithDescription(value, text) : null);
+			if (appliesTo(ElementType.AREA)) autosuggestAreas.add(key, value.length() > 0 ? new StringWithDescription(value, text) : null);			
 		}
 		
 		/**
@@ -1248,36 +1430,74 @@ public class Preset implements Serializable {
 		 * @param values values string from the XML (comma-separated list of possible values)
 		 */
 		public void addTag(boolean optional, String key, PresetKeyType type, String values) {
-			addTag(optional, key, type, values, ",");
+			addTag(optional, key, type, values, null, null, COMBO_DELIMITER);
 		}
 		
-		public void addTag(boolean optional, String key, PresetKeyType type, String values, String seperator) {
-			String[] valueArray = (values == null) ? new String[0] : values.split(Pattern.quote(seperator));
+		public void addTag(boolean optional, String key, PresetKeyType type, String values, String displayValues, String shortDescriptions, final String delimiter) {
+			String[] valueArray = (values == null) ? new String[0] : values.split(Pattern.quote(delimiter));
+			String[] displayValueArray = (displayValues == null) ? new String[0] : displayValues.split(Pattern.quote(delimiter));
+			String[] shortDescriptionArray = (shortDescriptions == null) ? new String[0] : shortDescriptions.split(Pattern.quote(delimiter));
 			StringWithDescription[] valuesWithDesc = new StringWithDescription[valueArray.length];
+			boolean useDisplayValues = valueArray.length == displayValueArray.length;
+			boolean useShortDescriptions = !useDisplayValues && valueArray.length == shortDescriptionArray.length;
 			for (int i=0;i<valueArray.length;i++){
-				valuesWithDesc[i] = new StringWithDescription(valueArray[i]);
+				String description = null;
+				if (useDisplayValues) {  
+					description = (po != null && displayValueArray[i] != null) ? po.t(displayValueArray[i]) : displayValueArray[i];
+				} else if (useShortDescriptions) {
+					description = (po != null && shortDescriptionArray[i] != null) ? po.t(shortDescriptionArray[i]):shortDescriptionArray[i];
+				}
+				valuesWithDesc[i] = new StringWithDescription(valueArray[i], description);
 			}
-			addTag(optional, key, type, valuesWithDesc);
+			addTag(optional, key, type, valuesWithDesc, delimiter);
 		}
 		
-		public void addTag(boolean optional, String key, PresetKeyType type, StringWithDescription[] valueArray) {
-		    int i = 0;
-			for (StringWithDescription v:valueArray) {
-				tagItems.add(key+"\t"+v.getValue(), this);
-			}
+		public void addTag(boolean optional, String key, PresetKeyType type, StringWithDescription[] valueArray, final String delimiter) {
+	    	if (!chunk){
+		    	if (valueArray==null || valueArray.length == 0) {
+		    		tagItems.add(key+"\t", this);
+		    	} else {
+		    		for (StringWithDescription v:valueArray) {
+		    			tagItems.add(key+"\t"+v.getValue(), this);
+		    		}
+		    	}
+		    }
 			// Log.d(DEBUG_TAG,name + " key " + key + " type " + type);
 			keyType.put(key,type);
 			if (appliesTo(ElementType.NODE)) autosuggestNodes.add(key, valueArray);
 			if (appliesTo(ElementType.WAY)) autosuggestWays.add(key, valueArray);
 			if (appliesTo(ElementType.CLOSEDWAY)) autosuggestClosedways.add(key, valueArray);
 			if (appliesTo(ElementType.RELATION)) autosuggestRelations.add(key, valueArray);
+			if (appliesTo(ElementType.AREA)) autosuggestAreas.add(key, valueArray);
 			
 			(optional ? optionalTags : recommendedTags).put(key, valueArray);
+			
+			// only save delimiter if not default
+			if ((type == PresetKeyType.MULTISELECT && !MULTISELECT_DELIMITER.equals(delimiter)) 
+					|| (type == PresetKeyType.COMBO && !COMBO_DELIMITER.equals(delimiter))) {
+				addDelimiter(key,delimiter);
+			}
 		}
 		
-		public void addRole(String value)
+		public void addRole(final StringWithDescription value)
 		{
+			if (roles == null) {
+				roles =  new LinkedList<StringWithDescription>();
+			}
 			roles.add(value);
+		}
+
+		public void addAllRoles(LinkedList<StringWithDescription> newRoles)
+		{
+			if (roles == null) { 
+				roles = newRoles; // doesn't matter if newRoles is null
+			} else if (newRoles != null){
+				roles.addAll(newRoles);
+			}
+		}
+		
+		public List<StringWithDescription> getRoles() {
+			return roles != null ? Collections.unmodifiableList(roles) : null;
 		}
 		
 		/**
@@ -1307,16 +1527,201 @@ public class Preset implements Serializable {
 		 * @param defaultValue
 		 */
 		public void addDefault(String key, String defaultValue) {
+			if (defaults == null) {
+				defaults = new HashMap<String, String>();
+			}
 			defaults.put(key, defaultValue);
-			
+		}
+		
+		public void addAllDefaults(HashMap<String, String> newDefaults)
+		{
+			if (defaults == null) { 
+				defaults = newDefaults; // doesn't matter if newDefaults is null
+			} else if (newDefaults != null){
+				defaults.putAll(newDefaults);
+			}
 		}
 		
 		public String getDefault(String key) {
-			return defaults.get(key);
+			return defaults != null ? defaults.get(key) : null;
+		}
+		
+		/**
+		 * Save non-standard values for the tag
+		 * @param key
+		 * @param on
+		 */
+		public void addOnValue(String key, String on) {
+			if (onValue == null) {
+				onValue = new HashMap<String, String>();
+			}
+			onValue.put(key, on);
+		}
+		
+		public void addAllOnValues(HashMap<String, String> newOnValues)
+		{
+			if (onValue == null) { 
+				onValue = newOnValues; // doesn't matter if newOnValues is null
+			} else if (newOnValues != null){
+				onValue.putAll(newOnValues);
+			}
+		}
+		
+		public String getOnValue(String key) {
+			return onValue != null ? onValue.get(key) : "yes";
+		}
+		
+		/**
+		 * Save non-standard values for the tag
+		 * @param key
+		 * @param on
+		 */
+		public void addDelimiter(String key, String delimiter) {
+			if (delimiters == null) {
+				delimiters = new HashMap<String,String>();
+			}
+			delimiters.put(key, delimiter);
+		}
+		
+		public void addAllDelimiters(HashMap<String, String> newDelimiters)
+		{
+			if (delimiters == null) { 
+				delimiters = newDelimiters; // doesn't matter if newOnValues is null
+			} else if (newDelimiters != null){
+				delimiters.putAll(newDelimiters);
+			}
+		}
+		
+		public char getDelimiter(String key) {
+			return (delimiters != null && delimiters.get(key) != null? delimiters.get(key) : (getKeyType(key) == PresetKeyType.MULTISELECT ? MULTISELECT_DELIMITER : COMBO_DELIMITER)).charAt(0);
+		}
+		
+		public void setMatchType(String key, String match) {
+			if (matchType == null) {
+				matchType = new HashMap<String,MatchType>();
+			}
+			MatchType type = null;
+			if (match.equals("none")) {
+				type = MatchType.NONE;
+			} else if (match.equals("key")) {
+				type = MatchType.KEY;
+			} else if (match.equals("key!")) {
+				type = MatchType.KEY_NEG;
+			} else if (match.equals("keyvalue")) {
+				type = MatchType.KEY_VALUE;
+			} else if (match.equals("keyvalue!")) {
+				type = MatchType.KEY_VALUE_NEG;
+			}
+			matchType.put(key, type);
+		}
+		
+		public void setAllMatchTypes(HashMap<String,MatchType> newMatchTypes)
+		{
+			if (matchType == null) { 
+				matchType = newMatchTypes; // doesn't matter if newMatchTypes is null
+			} else if (newMatchTypes != null){
+				matchType.putAll(newMatchTypes);
+			}
+		}
+
+		public MatchType getMatchType(String key) {
+			return matchType != null ? matchType.get(key) : null;
 		}
 		
 		public void addLinkedPresetName(String presetName) {
+			if (linkedPresetNames == null) {
+				linkedPresetNames = new LinkedList<String>();
+			}
 			linkedPresetNames.add(presetName);
+		}
+		
+		public void addAllLinkedPresetNames(LinkedList<String> newLinkedPresetNames) {
+			if (linkedPresetNames == null) { 
+				linkedPresetNames = newLinkedPresetNames; // doesn't matter if newLinkedPresetNames is null
+			} else if (newLinkedPresetNames != null){
+				linkedPresetNames.addAll(newLinkedPresetNames);
+			}
+		}
+		
+		public LinkedList<String> getLinkedPresetNames() {
+			return linkedPresetNames;
+		}
+		
+		public List<PresetItem> getLinkedPresets() {
+			ArrayList<PresetItem> result = new ArrayList<PresetItem>();
+			if (linkedPresetNames != null) {
+				for (String n:linkedPresetNames) {
+					Integer index = getItemIndexByName(n); // FIXME this involves a sequential search
+					result.add(allItems.get(index.intValue()));
+				}
+			}
+			return result;
+		}
+		
+		public void setSort(String key, boolean sortIt) {
+			if (sort == null) {
+				sort = new HashMap<String,Boolean>(); 
+			}
+			sort.put(key,sortIt);
+		}
+		
+		public void setAllSort(HashMap<String,Boolean> newSort) {
+			if (sort == null) { 
+				sort = newSort; // doesn't matter if newSort is null
+			} else if (newSort != null){
+				sort.putAll(newSort);
+			}
+		}
+		
+		public boolean sortIt(String key) {
+			return (sort == null ||  sort.get(key) == null) ? true : sort.get(key);
+		}
+		
+		public void setEditable(String key, boolean isEditable) {
+			if (editable == null) {
+				editable = new HashMap<String,Boolean>(); 
+			}
+			editable.put(key,isEditable);
+		}
+		
+		public void setAllEditable(HashMap<String,Boolean> newEditable) {
+			if (editable == null) { 
+				editable = newEditable; // doesn't matter if newSort is null
+			} else if (newEditable != null){
+				editable.putAll(newEditable);
+			}
+		}
+		
+		/**
+		 * Check is the combo or multiselect should be editable
+		 * NOTE: contrary to the definition in JOSM the default is false/no
+		 * @param key
+		 * @return
+		 */
+		public boolean isEditable(String key) {
+			return (editable == null ||  editable.get(key) == null) ? false : editable.get(key);
+		}
+		
+		public void setTextContext(String key, String textContext) {
+			if (this.textContext == null) {
+				this.textContext = new HashMap<String, String>();
+			}
+			this.textContext.put(key, textContext);
+		}
+		
+		public String getTextContext(String key) {
+			return textContext.get(key);
+		}
+		
+		public void setValueContext(String key, String valueContext) {
+			if (this.valueContext == null) {
+				this.valueContext = new HashMap<String, String>();
+			}
+			this.valueContext.put(key, valueContext);
+		}
+		
+		public String getValueContext(String key) {
+			return valueContext.get(key);
 		}
 		
 		/**
@@ -1338,6 +1743,14 @@ public class Preset implements Serializable {
 			return fixedTags.containsKey(key);
 		}
 		
+		public boolean isRecommendedTag(String key) {
+			return recommendedTags.containsKey(key);
+		}
+		
+		public boolean isOptionalTag(String key) {
+			return optionalTags.containsKey(key);
+		}
+		
 		public Map<String,StringWithDescription[]> getRecommendedTags() {
 			return Collections.unmodifiableMap(recommendedTags);
 		}
@@ -1346,17 +1759,13 @@ public class Preset implements Serializable {
 			return Collections.unmodifiableMap(optionalTags);
 		}
 		
-		public List<String> getRoles() {
-			return Collections.unmodifiableList(roles);
-		}
-		
 		/**
 		 * Return a ist of the values suitable for autocomplete, note vales for fixed tags are not returned
 		 * @param key
 		 * @return
 		 */
 		public Collection<StringWithDescription> getAutocompleteValues(String key) {
-			Collection<StringWithDescription> result = new HashSet<StringWithDescription>();
+			Collection<StringWithDescription> result = new LinkedHashSet<StringWithDescription>();
 			if (recommendedTags.containsKey(key)) {
 				result.addAll(Arrays.asList(recommendedTags.get(key)));
 			} else if (optionalTags.containsKey(key)) {
@@ -1385,9 +1794,22 @@ public class Preset implements Serializable {
 		 * @return
 		 */
 		public boolean matches(Map<String,String> tagSet) {
+			if (name.equals("Addresses")) {
+				Log.d(DEBUG_TAG,"matching addresses fixed");
+			}
 			for (Entry<String, StringWithDescription> tag : fixedTags.entrySet()) { // for each own tag
-				String otherTagValue = tagSet.get(tag.getKey());
-				if (otherTagValue == null || !tag.getValue().equals(otherTagValue)) return false;
+				String key = tag.getKey();
+				if (!tagSet.containsKey(key)) {
+					return false;
+				}
+				MatchType type = getMatchType(key);
+				if (type==MatchType.NONE) {
+					continue;
+				}
+				String otherTagValue = tagSet.get(key);		
+				if (!tag.getValue().equals(otherTagValue) && type!=MatchType.KEY) {
+					return false;
+				}
 			}
 			return true;
 		}
@@ -1398,17 +1820,30 @@ public class Preset implements Serializable {
 		 * @return number of matches
 		 */
 		public int matchesRecommended(Map<String,String> tagSet) {
+			if (name.equals("Addresses")) {
+				Log.d(DEBUG_TAG,"matching addresses recommended");
+			}
 			int matches = 0;
 			for (Entry<String, StringWithDescription[]> tag : recommendedTags.entrySet()) { // for each own tag
-				String otherTagValue = tagSet.get(tag.getKey());
-				if (otherTagValue != null) {
+				String key = tag.getKey();
+				if (tagSet.containsKey(key)) { // key could have null value in the set
+					// value not empty
+					if (getMatchType(key)==MatchType.NONE) {
+						// don't count this
+						break;
+					}
+					if (getMatchType(key)==MatchType.KEY) {
+						matches++;
+						break;
+					}
+					String otherTagValue = tagSet.get(key);
 					for (StringWithDescription v:tag.getValue()) {
 						if (v.equals(otherTagValue)) {
 							matches++;
 							break;
 						}
 					}
-				}
+				} 
 			}
 			return matches;
 		}
@@ -1435,6 +1870,66 @@ public class Preset implements Serializable {
 			return v;
 		}
 
+		/**
+		 * Return true if the key is contained in this preset
+		 * @param key
+		 * @return
+		 */
+		public boolean hasKey(String key) {
+			return fixedTags.containsKey(key) || recommendedTags.containsKey(key) || optionalTags.containsKey(key);
+		}
+		
+		/**
+		 * Return true if the key and value is contained in this preset taking match attribute in to account
+		 * @param key
+		 * @return
+		 */
+		public boolean hasKeyValue(String key, String value) {
+
+			StringWithDescription swd = fixedTags.get(key);
+			if (swd!=null) {
+				if ("".equals(value) || swd.getValue()==null || swd.equals(value) || "".equals(swd.getValue())) {
+					return true;
+				}
+			}
+
+			MatchType type = getMatchType(key);
+			PresetKeyType keyType = getKeyType(key);
+
+			if (recommendedTags.containsKey(key)) {
+				if (type==MatchType.KEY || keyType==PresetKeyType.MULTISELECT) { // MULTISELECT always editable
+					return true;
+				}
+				StringWithDescription[] swdArray = recommendedTags.get(key);
+				if (swdArray != null && swdArray.length > 0) {
+					for (StringWithDescription v:swdArray) {
+						if ("".equals(value) || v.getValue()==null || v.equals(value) || "".equals(v.getValue())) {
+							return true;
+						}
+					}
+				} else {
+					return true;
+				}
+			}
+
+			if (optionalTags.containsKey(key)) { 
+				if (type==MatchType.KEY || keyType==PresetKeyType.MULTISELECT) { // MULTISELECT always editable
+					return true;
+				}
+				StringWithDescription[] swdArray = optionalTags.get(key);
+				if (swdArray != null && swdArray.length > 0) {
+					for (StringWithDescription v:swdArray) {
+						if ("".equals(value) || v.getValue()==null || v.equals(value) || "".equals(v.getValue())) {
+							return true;
+						}
+					}
+				} else {
+					return true;
+				}
+			}
+			return false;
+		}
+		
 		public int getItemIndex() {
 			return itemIndex;
 		}
@@ -1463,6 +1958,14 @@ public class Preset implements Serializable {
 			return super.toString() + tagStrings;
 		}
 	
+		protected void setChunk() {
+			chunk = true;
+		}
+		
+		protected boolean isChunk() {
+			return chunk;
+		}
+		
 		public String toJSON() {
 			String jsonString = "";
 			for (String k:fixedTags.keySet()) {
@@ -1484,24 +1987,47 @@ public class Preset implements Serializable {
 			return jsonString;
 		}
 		
+		/**
+		 * For taginfo.openstreetmap.org
+		 * @param key
+		 * @param value
+		 * @return
+		 */
 		private String tagToJSON(String key, String value) {
-			String result = "{ \"key\": \"" + key + "\"" + (value == null ? "" : ", \"value\": \"" + value + "\"");
-			result = result + " , \"object_types\": [";
+			String presetName = name;
+			PresetElement p = getParent();
+			while (p != null && p != rootGroup && !"".equals(p.getName())){
+				presetName = p.getName() + "/" + presetName;
+				p = p.getParent();
+			}
+			String result = "{\"description\":\"" + presetName + "\",\"key\": \"" + key + "\"" + (value == null ? "" : ",\"value\": \"" + value + "\"");
+			result = result + ",\"object_types\": [";
+			boolean first = true;
 			if (appliesToNode) {
 				result = result + "\"node\"";
+				first = false;
 			}
-			if (appliesToRelation) {
-				if (appliesToNode) {
-					result = result + ",";
-				}
-				result = result + "\"node\"";
-			}
-			if (appliesToWay || appliesToClosedway) {
-				if (appliesToRelation) {
+			if (appliesToWay) {
+				if (!first) {
 					result = result + ",";
 				}
 				result = result + "\"way\"";
-			}			
+				first = false;
+			}	
+			if (appliesToRelation) {
+				if (!first) {
+					result = result + ",";
+				}
+				result = result + "\"relation\"";
+				first = false;
+			}
+			if (appliesToClosedway || appliesToArea) {
+				if (!first) {
+					result = result + ",";
+				}
+				result = result + "\"area\"";
+				first = false;
+			}
 			return  result + "]},\n";
 		}
 	}
@@ -1558,7 +2084,7 @@ public class Preset implements Serializable {
 	}
 
 	static public Collection<String> getAutocompleteKeys(Preset[] presets, ElementType type) {
-		Collection<String> result = new HashSet<String>();
+		Collection<String> result = new LinkedHashSet<String>();
 		for (Preset p:presets) {
 			if (p!=null) {
 				switch (type) {
@@ -1566,6 +2092,7 @@ public class Preset implements Serializable {
 				case WAY: result.addAll(p.autosuggestWays.getKeys()); break;
 				case CLOSEDWAY: result.addAll(p.autosuggestClosedways.getKeys()); break;
 				case RELATION: result.addAll(p.autosuggestRelations.getKeys()); break;
+				case AREA: result.addAll(p.autosuggestAreas.getKeys()); break;
 				default: return null; // should never happen, all cases are covered
 				}
 			}
@@ -1576,7 +2103,7 @@ public class Preset implements Serializable {
 	}
 	
 	static public Collection<StringWithDescription> getAutocompleteValues(Preset[] presets, ElementType type, String key) {
-		Collection<StringWithDescription> result = new HashSet<StringWithDescription>();
+		Collection<StringWithDescription> result = new LinkedHashSet<StringWithDescription>();
 		for (Preset p:presets) {
 			if (p!=null) {
 				switch (type) {
@@ -1584,6 +2111,7 @@ public class Preset implements Serializable {
 				case WAY: result.addAll(p.autosuggestWays.get(key)); break;
 				case CLOSEDWAY: result.addAll(p.autosuggestClosedways.get(key)); break;
 				case RELATION: result.addAll(p.autosuggestRelations.get(key)); break;
+				case AREA: result.addAll(p.autosuggestAreas.get(key)); break;
 				default: return Collections.emptyList();
 				}
 			}
@@ -1611,6 +2139,28 @@ public class Preset implements Serializable {
 			}
 		}
 		return result;
+	}
+	
+	/**
+	 * Build an intent to startup up the correct mapfeatures wili page
+	 * @param ctx
+	 * @param p
+	 * @return
+	 */
+	public static Intent getMapFeaturesIntent(Context ctx,PresetItem p) {
+		Uri uri = null;
+		if (p != null) {
+			try {
+				uri = p.getMapFeatures();
+			} catch (NullPointerException npe) {
+				// 
+				Log.d(DEBUG_TAG,"Preset " + p.getName() + " has no/invalid map feature uri");
+			}
+		}
+		if (uri == null) {
+			uri = Uri.parse(ctx.getString(R.string.link_mapfeatures));
+		}
+		return new Intent(Intent.ACTION_VIEW, uri);
 	}
 }
 

@@ -4,25 +4,23 @@ import java.util.List;
 import java.util.Map.Entry;
 
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnCancelListener;
 import android.content.Intent;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
+import android.support.v7.app.AlertDialog;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
+import android.view.LayoutInflater;
+import android.view.Menu;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.CheckBox;
 import android.widget.TextView;
-import android.widget.Toast;
-
-import com.actionbarsherlock.view.Menu;
-
 import de.blau.android.R;
 import de.blau.android.prefs.AdvancedPrefDatabase.API;
+import de.blau.android.util.ThemeUtils;
 
 /** Provides an activity for editing the API list */
 public class APIEditorActivity extends URLListEditActivity {
@@ -48,7 +46,7 @@ public class APIEditorActivity extends URLListEditActivity {
 	public void onCreate(Bundle savedInstanceState) {
 		Preferences prefs = new Preferences(this);
 		if (prefs.lightThemeEnabled()) {
-			setTheme(R.style.Theme_Sherlock_Light);
+			setTheme(R.style.Theme_customLight);
 		}
 		db = new AdvancedPrefDatabase(this);
 		super.onCreate(savedInstanceState);
@@ -118,7 +116,9 @@ public class APIEditorActivity extends URLListEditActivity {
 	@Override
 	protected void itemEditDialog(final ListEditItem item) {
 		final AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
-		final View mainView = View.inflate(ctx, R.layout.listedit_apiedit, null);
+		final LayoutInflater inflater = ThemeUtils.getLayoutInflater(ctx);
+		final View mainView = inflater.inflate(R.layout.listedit_apiedit, null);
+		// final View mainView = View.inflate(ctx, R.layout.listedit_apiedit, null);
 		final TextView editName = (TextView)mainView.findViewById(R.id.listedit_editName);
 		final TextView editValue = (TextView)mainView.findViewById(R.id.listedit_editValue);
 		final CheckBox oauth = (CheckBox)mainView.findViewById(R.id.listedit_oauth);

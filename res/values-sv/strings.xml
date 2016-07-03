@@ -1,0 +1,85 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+  <!--Dialogs-->
+  <string name="transfer_download_current_dialog_title">Varning!</string>
+  <string name="transfer_download_current_dialog_message">Du har gjort några ändringar. Vill du ladda upp dem i stället för slänga?</string>
+  <string name="transfer_download_current_upload">Ladda upp</string>
+  <string name="transfer_download_current_back">Back (Gör ingenting)</string>
+  <string name="upload_problem_title">Problem med uppladdning</string>
+  <string name="upload_problem_message">En del eller all data laddades inte upp. Försök att ladda upp igen senare om det var bara ett tillfälligt problem.</string>
+  <string name="upload_conflict_title">Uppladdningskonflikt</string>
+  <string name="no_login_data_title">Autentisering misslyckades</string>
+  <string name="no_connection_title">Ingen anslutning till server</string>
+  <string name="no_connection_message">Det gick inte att ansluta till OSM-servern. Kontrollera Internetanslutningen eller försök igen senare.</string>
+  <string name="wrong_login_data_title">Autentisering misslyckades</string>
+  <string name="wrong_login_data_re_authenticate">Verifiera igen</string>
+  <string name="api_offline_message">API är för närvarande offline och data kan inte hämtas eller skrivas.</string>
+  <string name="out_of_memory_title">Slut på minne</string>
+  <string name="out_of_memory_message">Vespucci har slut på minne för att ladda de begärda uppgifterna. Starta om och prova ladda ett mindre område.</string>
+  <string name="out_of_memory_dirty_message">Vespucci har slut på minne för att ladda de begärda uppgifterna. Vänligen försök att spara ändringar, starta om och prova att ladda ett mindre område.</string>
+  <string name="invalid_data_received_title">Ogiltiga data mottagna</string>
+  <string name="file_write_failed_title">Fil skrivning misslyckades</string>
+  <string name="file_write_failed_message">Det gick inte att skriva till vald fil.</string>
+  <string name="welcome_title">Välkommen!</string>
+  <string name="read_introduction">Läs introduktionen nu</string>
+  <string name="upgrade_title">Välkommen till en ny version av Vespucci!</string>
+  <string name="read_upgrade">Läs om den nya versionen</string>
+  <string name="progress_title">Laddar</string>
+  <string name="progress_message">Ladda in data i minnet...</string>
+  <string name="progress_download_message">Ladda ner data från servern...</string>
+  <string name="progress_general_title">Vänta</string>
+  <string name="progress_deleting_message">Tar bort...</string>
+  <string name="progress_searching_message">Söker...</string>
+  <string name="progress_saving_message">Sparar...</string>
+  <string name="upload_comment_label">Kommentar:</string>
+  <string name="upload_source_label">Källa:</string>
+  <string name="upload_gpx_description_label">Beskrivning</string>
+  <string name="upload_gpx_tags_label">Etiketter</string>
+  <string name="openstreetbug_new_title">Ny anteckning</string>
+  <string name="openstreetbug_edit_title">Redigera anteckning</string>
+  <string name="openstreetbug_edit_close">Stäng</string>
+  <string name="openstreetbug_edit_closed">Stängt</string>
+  <string name="imagery_offset_description">Beskrivning</string>
+  <string name="imagery_offset_author">Författare</string>
+  <string name="imagery_offset_zoom">Zoom</string>
+  <string name="search_results_title">Sökresultat</string>
+  <string name="find_message">Ange sökssträng</string>
+  <string name="read_file">Välj fil att läsa</string>
+  <string name="save_file">Ange fil att spara till</string>
+  <string name="id">Id</string>
+  <string name="problem">Problem</string>
+  <!--Toaster-->
+  <!--Some generic labels/buttons-->
+  <!--Dialog for back button-->
+  <!--Strings in PorpertyEditor-->
+  <!--Strings in LocationPicker-->
+  <!--Menu-->
+  <string name="menu_move">Flytta</string>
+  <string name="menu_add">Ny</string>
+  <string name="menu_find">Hitta</string>
+  <string name="menu_help">Hjälp</string>
+  <!--element action mode menu-->
+  <!--Text should be as short as possible-->
+  <!--EasyEdit action mode titles-->
+  <!--Preferences-->
+  <!--preset downloader messages-->
+  <!--changes-->
+  <!--url handler activity-->
+  <!--common terms-->
+  <!--"default" is a reserved Java keyword...-->
+  <!--undo actions - give a description of the action, in infinitive, to display in strings like "Undo: actionname" or "Redo: actionname"-->
+  <!--ACRA-->
+  <!--Exceptions messages-->
+  <!--Notifications-->
+  <!--Misc relation related stuff-->
+  <string name="object">Objekt</string>
+  <!--time and distance-->
+  <string name="days">dagar</string>
+  <string name="hours">timmar</string>
+  <string name="minutes">minuter</string>
+  <string name="seconds">sekunder</string>
+  <string name="km">km</string>
+  <string name="meter">meter</string>
+  <!--Help system-->
+  <!--Arrays-->
+</resources>

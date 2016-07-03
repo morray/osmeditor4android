@@ -1,48 +1,17 @@
 package de.blau.android.tasks;
 
-import java.util.List;
-
-import com.actionbarsherlock.app.SherlockDialogFragment;
-
-import de.blau.android.Application;
-import de.blau.android.PostAsyncActionHandler;
-import de.blau.android.R;
-import de.blau.android.Logic.Mode;
-import de.blau.android.R.id;
-import de.blau.android.R.layout;
-import de.blau.android.R.string;
-import de.blau.android.exception.OsmException;
-import de.blau.android.listener.UpdateViewListener;
-import de.blau.android.osm.BoundingBox;
-import de.blau.android.osm.Node;
-import de.blau.android.osm.OsmElement;
-import de.blau.android.osm.Relation;
-import de.blau.android.osm.RelationMember;
-import de.blau.android.osm.StorageDelegator;
-import de.blau.android.osm.Tags;
-import de.blau.android.osm.Way;
-import de.blau.android.prefs.Preferences;
-import de.blau.android.presets.Preset.PresetItem;
-import de.blau.android.propertyeditor.TagEditorFragment;
-import de.blau.android.propertyeditor.PresetFragment.OnPresetSelectedListener;
-import de.blau.android.tasks.Task.State;
-import de.blau.android.util.GeoMath;
-import de.blau.android.util.IssueAlert;
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.Dialog;
-import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnShowListener;
-import android.graphics.Color;
-import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
 import android.support.v4.app.DialogFragment;
+import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AlertDialog;
+import android.support.v7.app.AppCompatDialog;
 import android.text.Editable;
 import android.text.Html;
-import android.text.TextUtils.TruncateAt;
 import android.text.TextWatcher;
 import android.text.method.LinkMovementMethod;
 import android.text.util.Linkify;
@@ -50,29 +19,33 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
-import android.view.ViewGroup;
-import android.view.Window;
 import android.view.WindowManager;
 import android.widget.AdapterView;
-import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ListView;
-import android.widget.ScrollView;
 import android.widget.Spinner;
-import android.widget.TableLayout;
-import android.widget.TableRow;
 import android.widget.TextView;
+import de.blau.android.Application;
+import de.blau.android.PostAsyncActionHandler;
+import de.blau.android.R;
+import de.blau.android.exception.OsmException;
+import de.blau.android.listener.UpdateViewListener;
+import de.blau.android.osm.BoundingBox;
+import de.blau.android.osm.OsmElement;
+import de.blau.android.osm.StorageDelegator;
+import de.blau.android.prefs.Preferences;
+import de.blau.android.tasks.Task.State;
+import de.blau.android.util.GeoMath;
+import de.blau.android.util.IssueAlert;
 
 /**
  * Very simple dialog fragment to display bug or notes
  * @author simon
  *
  */
-public class TaskFragment extends SherlockDialogFragment {
+public class TaskFragment extends DialogFragment {
 	private static final String DEBUG_TAG = TaskFragment.class.getSimpleName();
 	 
 	UpdateViewListener mListener;
@@ -96,9 +69,9 @@ public class TaskFragment extends SherlockDialogFragment {
         super.onCreate(savedInstanceState);
     }
     
-    @SuppressLint("NewApi")
+    @SuppressLint({ "NewApi", "InflateParams" })
 	@Override
-    public Dialog onCreateDialog(Bundle savedInstanceState) {
+    public AppCompatDialog onCreateDialog(Bundle savedInstanceState) {
     	final Task bug = (Task) getArguments().getSerializable("bug");
     	AlertDialog.Builder builder = new AlertDialog.Builder(getActivity());
     	// Get the layout inflater
@@ -153,6 +126,11 @@ public class TaskFragment extends SherlockDialogFragment {
     	if (bug instanceof Note) {
     		builder.setTitle(getString((bug.isNew() && ((Note)bug).count() == 0) ? R.string.openstreetbug_new_title : R.string.openstreetbug_edit_title));  		
     		comments.setText(Html.fromHtml(((Note)bug).getComment())); // ugly	
+    		comments.setAutoLinkMask(Linkify.WEB_URLS);
+    		comments.setMovementMethod(LinkMovementMethod.getInstance()); 
+    		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
+    			comments.setTextIsSelectable(true);
+    		}
     		NoteComment nc = ((Note) bug).getLastComment();	
     		elementLayout.setVisibility(View.GONE); // not used for notes
     		if ((bug.isNew() && ((Note)bug).count() == 0) || (nc != null && !nc.isNew())) { // only show comment field if we don't have an unsaved comment
@@ -189,7 +167,7 @@ public class TaskFragment extends SherlockDialogFragment {
 						if (e.getOsmVersion() < 0) { // fake element
 							try {
 								BoundingBox b = GeoMath.createBoundingBoxForCoordinates(latE7/1E7D, lonE7/1E7, 50, true);
-								Application.mainActivity.getLogic().downloadBox(b, true, new PostAsyncActionHandler(){
+								Application.getLogic().downloadBox(b, true, new PostAsyncActionHandler(){
 									@Override
 									public void execute(){
 										OsmElement osm = storageDelegator.getOsmElement(e.getName(), e.getOsmId());
@@ -206,7 +184,7 @@ public class TaskFragment extends SherlockDialogFragment {
 		    				Application.mainActivity.zoomToAndEdit(lonE7, latE7, e);
 		    			}
 					}});
-    			tv.setTextColor(getActivity().getResources().getColor(R.color.holo_blue_light));
+    			tv.setTextColor(ContextCompat.getColor(getActivity(),R.color.holo_blue_light));
     			tv.setText(text);
     			elementLayout.addView(tv);
     		}
@@ -240,7 +218,7 @@ public class TaskFragment extends SherlockDialogFragment {
     	} 
     	
     	state.setEnabled(!bug.isNew()); // new bugs always open
-    	Dialog d = builder.create();
+    	AppCompatDialog d = builder.create();
     	
     	if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO) {
     		d.setOnShowListener(new OnShowListener() { // old API, buttons are enabled by default

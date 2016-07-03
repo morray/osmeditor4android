@@ -15,9 +15,7 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.Collections;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -35,18 +33,10 @@ import org.xmlpull.v1.XmlPullParserFactory;
 import org.xmlpull.v1.XmlSerializer;
 
 import android.content.Context;
-import android.graphics.Color;
-import android.graphics.Path;
-import android.graphics.Typeface;
-import android.graphics.Paint.Cap;
-import android.graphics.Paint.Join;
-import android.graphics.Paint.Style;
 import android.location.Location;
 import android.os.AsyncTask;
 import android.util.Log;
 import de.blau.android.osm.GeoPoint.InterruptibleGeoPoint;
-import de.blau.android.resources.Profile.FeatureProfile;
-import de.blau.android.util.Density;
 import de.blau.android.util.SavingHelper;
 
 /**
@@ -239,33 +229,35 @@ public class Track extends DefaultHandler {
 			@Override
 			protected Void doInBackground(Void... params) {
 				loadingLock.lock();
-				if (!isOpen) {
+				try {
+					if (!isOpen) {
+						return null; // if this has been closed by close() in the meantime, STOP
+					}
+
+					File saveFile = new File(ctx.getFilesDir(), SAVEFILE);
+					boolean success = load();
+					if (!success || loaded.isEmpty()) {
+						Log.i(TAG, "Deleting broken or empty save file");
+						deleteSaveFile();
+					}
+
+					// If the save file exists, it contains exactly the elements in loaded
+					if (!loaded.isEmpty() && !saveFile.exists()) {
+						// A broken save file was partially recovered. Rewrite it now.
+						Log.i(TAG, "Rewriting partially recovered save file");
+						rewriteSaveFile(loaded);
+					}
+
+					savedTrackPoints = loaded.size();
+
+					// There are only two possible situations now:
+					//  - save file does not exist, savedTrackPoints is 0 and memory does not contain any significant amount of data
+					//  - save file does exist, is valid and contains exactly savedTrackPoints records	
+
+					return null;
+				} finally {
 					loadingLock.unlock();
-					return null; // if this has been closed by close() in the meantime, STOP
 				}
-				
-				File saveFile = new File(ctx.getFilesDir(), SAVEFILE);
-				boolean success = load();
-				if (!success || loaded.isEmpty()) {
-					Log.i(TAG, "Deleting broken or empty save file");
-					deleteSaveFile();
-				}
-				
-				// If the save file exists, it contains exactly the elements in loaded
-				if (!loaded.isEmpty() && !saveFile.exists()) {
-					// A broken save file was partially recovered. Rewrite it now.
-					Log.i(TAG, "Rewriting partially recovered save file");
-					rewriteSaveFile(loaded);
-				}
-				
-				savedTrackPoints = loaded.size();
-				
-				// There are only two possible situations now:
-				//  - save file does not exist, savedTrackPoints is 0 and memory does not contain any significant amount of data
-				//  - save file does exist, is valid and contains exactly savedTrackPoints records
-				
-				loadingLock.unlock();
-				return null;
 			}
 			
 			@Override
@@ -275,7 +267,7 @@ public class Track extends DefaultHandler {
 				// See end of doInBackground for possible states
 				Log.i(TAG, "Track loading finished, loaded entries: " + loaded.size());
 				if (track.size() > savedTrackPoints) save();
-			};
+			}
 			
 			/**
 			 * Loads a track from the file to the "loaded" ArrayList.
@@ -352,15 +344,18 @@ public class Track extends DefaultHandler {
 		if (!isOpen) return;
 		Log.d(TAG,"Trying to close track");
 		loadingLock.lock();
-		save();
-		if (saveFileStream != null) {
-			SavingHelper.close(saveFileStream);
-			saveFileStream = null;
+		try {
+			save();
+			if (saveFileStream != null) {
+				SavingHelper.close(saveFileStream);
+				saveFileStream = null;
+			}
+			savingDisabled = true;
+			isOpen = false;
+			Log.i(TAG,"Track closed");
+		} finally {
+			loadingLock.unlock();
 		}
-		savingDisabled = true;
-		isOpen = false;
-		Log.i(TAG,"Track closed");
-		loadingLock.unlock();
 	}
 	
 	/**
@@ -381,6 +376,7 @@ public class Track extends DefaultHandler {
 		XmlSerializer serializer = XmlPullParserFactory.newInstance().newSerializer();
 		serializer.setOutput(outputStream, "UTF-8");
 		serializer.startDocument("UTF-8", null);
+		serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
 		serializer.startTag(null, "gpx");
 		serializer.attribute(null, "xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
 		serializer.attribute(null, "xmlns", "http://www.topografix.com/GPX/1/0");

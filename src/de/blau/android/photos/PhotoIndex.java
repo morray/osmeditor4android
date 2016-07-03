@@ -16,13 +16,11 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteOpenHelper;
-import android.graphics.Rect;
 import android.os.Environment;
 import android.util.Log;
 import de.blau.android.Application;
 import de.blau.android.contract.Paths;
 import de.blau.android.osm.BoundingBox;
-import de.blau.android.tasks.Task;
 import de.blau.android.util.rtree.BoundedObject;
 import de.blau.android.util.rtree.RTree;
 
@@ -35,9 +33,7 @@ public class PhotoIndex extends SQLiteOpenHelper {
 	
 	private final static int DATA_VERSION = 3;
 	private final static String LOGTAG = "PhotoIndex";
-	private final Context ctx;
 
-	
 	class JpgFilter implements FilenameFilter {
 		@Override
 		public boolean accept(File dir, String name) {
@@ -47,7 +43,6 @@ public class PhotoIndex extends SQLiteOpenHelper {
 	
 	public PhotoIndex(Context context) {
 		super(context, "PhotoIndex", null, DATA_VERSION);
-		ctx = context;
 	}
 	
 	@Override
@@ -120,7 +115,7 @@ public class PhotoIndex extends SQLiteOpenHelper {
 							File pDir = new File(dir2);
 							if (!pDir.exists()) {
 								Log.d(LOGTAG, "Deleting entries for gone dir " + dir2);
-								db.delete("photos","dir = '" + dir2 + "'", null);
+								db.delete("photos","dir = ?", new String[] {dir2});
 							}
 							dbresult2.moveToNext();
 						}
@@ -129,12 +124,12 @@ public class PhotoIndex extends SQLiteOpenHelper {
 						ContentValues values = new ContentValues();
 						Log.d(LOGTAG,"updating last scan for " + indir.getName() + " to " + System.currentTimeMillis());
 						values.put("last_scan", System.currentTimeMillis());	
-						db.update("directories", values, "dir = '" + indir.getName() + "'", null);
+						db.update("directories", values, "dir = ?", new String[] {indir.getName()});
 					} else {
 						Log.d(LOGTAG, "Directory " + indir.getAbsolutePath() + " doesn't exist");
 						// remove all entries for this directory
-						db.delete("photos","dir = '" + indir.getAbsolutePath() + "'", null);
-						db.delete("photos","dir LIKE '" + indir.getAbsolutePath() + "/%'", null);
+						db.delete("photos","dir = ?", new String[] {indir.getAbsolutePath()});
+						db.delete("photos","dir LIKE ?", new String[] {indir.getAbsolutePath() + "/%"});
 					}
 				}
 				dbresult.moveToNext();
@@ -158,7 +153,7 @@ public class PhotoIndex extends SQLiteOpenHelper {
 				// remove all entries
 				Log.d(LOGTAG,"deleteing refs for reindex");
 				try {
-					db.delete("photos","dir = '" + indir.getAbsolutePath() + "'", null);
+					db.delete("photos","dir = ?", new String[] { indir.getAbsolutePath()});
 				} catch (SQLiteException sqex) { 
 					Log.d(LOGTAG, sqex.toString()); 
 					ACRA.getErrorReporter().putCustomData("STATUS","NOCRASH");
@@ -238,40 +233,47 @@ public class PhotoIndex extends SQLiteOpenHelper {
 	 * @param box
 	 * @return
 	 */
-	public synchronized Collection<Photo> getPhotos(BoundingBox box) {
+	public Collection<Photo> getPhotos(BoundingBox box) {
 		RTree index = Application.getPhotoIndex();
 		if (index == null) {
-			Application.resetPhotoIndex(); // allocate r-tree
-			index = Application.getPhotoIndex();
-			try {
-				SQLiteDatabase db = getReadableDatabase();
-				Cursor dbresult = db.query(
-						"photos",
-						new String[] {"lat", "lon", "direction", "dir", "name"},
-						null, 
-						null, null, null, null, null);
-				int photoCount = dbresult.getCount();
-				dbresult.moveToFirst();
-				Log.i(LOGTAG,"Query returned " + photoCount + " photos");
-				// 
-				for (int i = 0; i < photoCount; i++) {
-					if (dbresult.isNull(2) ) { // no direction
-						index.insert(new Photo(dbresult.getInt(0), dbresult.getInt(1), dbresult.getString(3) + "/" + dbresult.getString(4)));
-					} else {
-						index.insert(new Photo(dbresult.getInt(0), dbresult.getInt(1), dbresult.getInt(2), dbresult.getString(3) + "/" + dbresult.getString(4)));
-					}
-					dbresult.moveToNext();
-				}
-				dbresult.close();
-				db.close();
-			} catch (SQLiteException ex) {
-				// shoudn't happen (getReadableDatabase failed), simply report for now
-				ACRA.getErrorReporter().handleException(ex);
-			}
+			return new ArrayList<Photo>();
 		}
 		
 		return getPhotosFromIndex(index, box);
 	}
+	
+	public synchronized void fill(RTree index) {
+		if (index==null) {
+			Application.resetPhotoIndex(); // allocate r-tree
+			index = Application.getPhotoIndex();
+		}
+		try {
+			SQLiteDatabase db = getReadableDatabase();
+			Cursor dbresult = db.query(
+					"photos",
+					new String[] {"lat", "lon", "direction", "dir", "name"},
+					null, 
+					null, null, null, null, null);
+			int photoCount = dbresult.getCount();
+			dbresult.moveToFirst();
+			Log.i(LOGTAG,"Query returned " + photoCount + " photos");
+			// 
+			for (int i = 0; i < photoCount; i++) {
+				if (dbresult.isNull(2) ) { // no direction
+					index.insert(new Photo(dbresult.getInt(0), dbresult.getInt(1), dbresult.getString(3) + "/" + dbresult.getString(4)));
+				} else {
+					index.insert(new Photo(dbresult.getInt(0), dbresult.getInt(1), dbresult.getInt(2), dbresult.getString(3) + "/" + dbresult.getString(4)));
+				}
+				dbresult.moveToNext();
+			}
+			dbresult.close();
+			db.close();
+		} catch (SQLiteException ex) {
+			// shoudn't happen (getReadableDatabase failed), simply report for now
+			ACRA.getErrorReporter().handleException(ex);
+		}
+	}
+	
 	
 	public ArrayList<Photo>getPhotosFromIndex(RTree index, BoundingBox box) {
 		Collection<BoundedObject> queryResult = new ArrayList<BoundedObject>();

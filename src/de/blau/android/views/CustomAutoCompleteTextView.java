@@ -1,6 +1,7 @@
 package de.blau.android.views;
 
 import android.content.Context;
+import android.support.v7.widget.AppCompatAutoCompleteTextView;
 import android.text.Editable;
 import android.text.SpannableString;
 import android.text.Spanned;
@@ -8,9 +9,9 @@ import android.text.TextUtils;
 import android.text.method.QwertyKeyListener;
 import android.util.AttributeSet;
 import android.util.Log;
-import android.widget.AutoCompleteTextView;
+import android.view.View;
 import android.widget.Filter;
-import android.widget.MultiAutoCompleteTextView.Tokenizer;
+import de.blau.android.R;
 
 /**
  * Custom version of AutoCompleteTextView with switchable behaviour of MultiAutoCompleteTextView 
@@ -25,7 +26,7 @@ import android.widget.MultiAutoCompleteTextView.Tokenizer;
  * Copyright (C) 2007 The Android Open Source Project, Licensed under the Apache License, Version 2.0
  *
  */
-public class CustomAutoCompleteTextView extends AutoCompleteTextView {
+public class CustomAutoCompleteTextView extends AppCompatAutoCompleteTextView {
 	
 	private static final String DEBUG_TAG = CustomAutoCompleteTextView.class.getName();
 	
@@ -34,11 +35,26 @@ public class CustomAutoCompleteTextView extends AutoCompleteTextView {
 	private int parentWidth = -1;
 
 	public CustomAutoCompleteTextView(Context context) {
-		super(context);
+		this(context,null);
 	}
 	
 	public CustomAutoCompleteTextView(Context context,  AttributeSet attrs) {
-		super(context, attrs);
+		this(context, attrs, R.attr.autoCompleteTextViewStyle);
+	}
+	
+	public  CustomAutoCompleteTextView(Context context, AttributeSet attrs, int defStyleAttr) {
+		super(context, attrs, defStyleAttr);
+		// set a default onClickListener that displays the dropdown
+		OnClickListener autocompleteOnClick = new OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				if (v.hasFocus()) {
+					Log.d(DEBUG_TAG,"onClick");
+					((CustomAutoCompleteTextView)v).showDropDown();
+				}
+			}
+		};
+		setOnClickListener(autocompleteOnClick);
 	}
 	
 	@Override
@@ -111,7 +127,7 @@ public class CustomAutoCompleteTextView extends AutoCompleteTextView {
     	}
         Editable text = super.getText();
         int end = getSelectionEnd();
-        if (end < 0 || mTokenizer == null) {
+        if (end < 0) {
             return false;
         }
         int start = mTokenizer.findTokenStart(text, end);
@@ -132,7 +148,7 @@ public class CustomAutoCompleteTextView extends AutoCompleteTextView {
     		return;
     	}
         Validator v = getValidator();
-        if (v == null || mTokenizer == null) {
+        if (v == null) {
             return;
         }
         Editable e = getText();
@@ -158,8 +174,10 @@ public class CustomAutoCompleteTextView extends AutoCompleteTextView {
      */
     protected void performFiltering(CharSequence text, int start, int end,
                                     int keyCode) {
+    	Log.d(DEBUG_TAG,"performFiltering 2");
         getFilter().filter(text.subSequence(start, end), this);
     }
+    
     /**
      * <p>Performs the text completion by replacing the range from
      * {@link Tokenizer#findTokenStart} to {@link #getSelectionEnd} by the
@@ -179,26 +197,25 @@ public class CustomAutoCompleteTextView extends AutoCompleteTextView {
        		super.replaceText(text);
     		return;
     	}
-	   	Log.d(DEBUG_TAG,"replacetext  " + text);
-        clearComposingText();
-        int end = getSelectionEnd();
-        int start = mTokenizer.findTokenStart(super.getText(), end);
-        Editable editable = super.getText();
-        String original = TextUtils.substring(editable, start, end);
-        QwertyKeyListener.markAsReplaced(editable, start, end, original);
-        editable.replace(start, end, mTokenizer.terminateToken(text));
     }
     
     /**
      * setText is final and can't be overridden
      * @param text
      */
-	public void setText2(String text) {
+	public void setOrReplaceText(String text) {
 	   	if (mTokenizer==null) {
        		super.setText(text);
     		return;
     	}
-	   	// replaceText(text); leaving this in causes dup text	
+	   	Log.d(DEBUG_TAG,"etOrReplaceText " + text);
+        clearComposingText();
+        int end = getSelectionEnd();
+        int start = mTokenizer.findTokenStart(super.getText(), end);
+        Editable editable = super.getText();
+        String original = TextUtils.substring(editable, start, end);
+        QwertyKeyListener.markAsReplaced(editable, start, end, original);
+        editable.replace(start, end, mTokenizer.terminateToken(text));	
 	}
 	
     public static interface Tokenizer {
@@ -218,7 +235,6 @@ public class CustomAutoCompleteTextView extends AutoCompleteTextView {
          */
         public CharSequence terminateToken(CharSequence text);
     }
-    
     
     /**
      * This simple Tokenizer can be used for lists where the items are

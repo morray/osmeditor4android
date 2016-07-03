@@ -12,8 +12,6 @@ import java.util.List;
 import org.acra.ACRA;
 
 import android.annotation.SuppressLint;
-import android.app.AlertDialog;
-import android.app.Dialog;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -21,8 +19,8 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.hardware.Sensor;
@@ -41,9 +39,17 @@ import android.os.IBinder;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.speech.RecognizerIntent;
+import android.support.design.widget.FloatingActionButton;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentTransaction;
+import android.support.v4.content.ContextCompat;
+import android.support.v4.view.MenuItemCompat;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.AlertDialog;
+import android.support.v7.view.ActionMode;
+import android.support.v7.widget.ActionMenuView;
+import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
@@ -51,6 +57,9 @@ import android.view.ContextThemeWrapper;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.MenuItem.OnMenuItemClickListener;
 import android.view.MotionEvent;
 import android.view.View;
@@ -60,29 +69,31 @@ import android.view.View.OnGenericMotionListener;
 import android.view.View.OnKeyListener;
 import android.view.View.OnLongClickListener;
 import android.view.View.OnTouchListener;
-import android.view.WindowManager;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
-import android.widget.TextView;
+import android.widget.RelativeLayout.LayoutParams;
 import android.widget.Toast;
-import android.widget.ToggleButton;
-import android.widget.ZoomControls;
-
-import com.actionbarsherlock.app.ActionBar;
-import com.actionbarsherlock.app.SherlockFragmentActivity;
-import com.actionbarsherlock.view.ActionMode;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuInflater;
-import com.actionbarsherlock.view.MenuItem;
-import com.actionbarsherlock.view.Window;
-
 import de.blau.android.GeoUrlActivity.GeoUrlData;
 import de.blau.android.Logic.CursorPaddirection;
 import de.blau.android.Logic.Mode;
 import de.blau.android.RemoteControlUrlActivity.RemoteControlUrlData;
 import de.blau.android.actionbar.UndoDialogFactory;
 import de.blau.android.contract.Paths;
+import de.blau.android.dialogs.BackgroundProperties;
+import de.blau.android.dialogs.ConfirmUpload;
+import de.blau.android.dialogs.DataLossActivity;
+import de.blau.android.dialogs.DownloadCurrentWithChanges;
+import de.blau.android.dialogs.ElementInfo;
+import de.blau.android.dialogs.ErrorAlert;
+import de.blau.android.dialogs.GpxUpload;
+import de.blau.android.dialogs.ImportTrack;
+import de.blau.android.dialogs.NewVersion;
+import de.blau.android.dialogs.Newbie;
+import de.blau.android.dialogs.Progress;
+import de.blau.android.dialogs.SaveFile;
+import de.blau.android.dialogs.SearchForm;
 import de.blau.android.easyedit.EasyEditManager;
 import de.blau.android.exception.OsmException;
 import de.blau.android.imageryoffset.BackgroundAlignmentActionModeCallback;
@@ -104,7 +115,7 @@ import de.blau.android.prefs.PrefEditor;
 import de.blau.android.prefs.Preferences;
 import de.blau.android.propertyeditor.PropertyEditor;
 import de.blau.android.propertyeditor.PropertyEditorData;
-import de.blau.android.resources.Profile;
+import de.blau.android.resources.DataStyle;
 import de.blau.android.services.TrackerService;
 import de.blau.android.services.TrackerService.TrackerBinder;
 import de.blau.android.services.TrackerService.TrackerLocationListener;
@@ -113,12 +124,15 @@ import de.blau.android.tasks.TaskFragment;
 import de.blau.android.tasks.TransferTasks;
 import de.blau.android.util.DateFormatter;
 import de.blau.android.util.FileUtil;
+import de.blau.android.util.FullScreenAppCompatActivity;
 import de.blau.android.util.GeoMath;
+import de.blau.android.util.MenuUtil;
 import de.blau.android.util.NetworkStatus;
 import de.blau.android.util.OAuthHelper;
 import de.blau.android.util.SavingHelper;
-import de.blau.android.util.ThemeUtils;
+import de.blau.android.util.Search.SearchResult;
 import de.blau.android.util.Util;
+import de.blau.android.views.ZoomControls;
 import de.blau.android.voice.Commands;
 
 /**
@@ -126,7 +140,7 @@ import de.blau.android.voice.Commands;
  * 
  * @author mb
  */
-public class Main extends SherlockFragmentActivity implements ServiceConnection, TrackerLocationListener, UpdateViewListener {
+public class Main extends FullScreenAppCompatActivity implements ServiceConnection, TrackerLocationListener, UpdateViewListener {
 
 	/**
 	 * Tag used for Android-logging.
@@ -182,8 +196,6 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 * Where we install the current version of vespucci
 	 */
 	private static final String VERSION_FILE = "version.dat"; 
-
-	private DialogFactory dialogFactory;
 	
 	private class ConnectivityChangedReceiver extends BroadcastReceiver {
 		@Override
@@ -236,7 +248,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	/** Detector for taps, drags, and scaling. */
 	private VersionedGestureDetector mDetector;
 	/** Onscreen map zoom controls. */
-	private ZoomControls zoomControls;
+	private de.blau.android.views.ZoomControls zoomControls;
 	/**
 	 * Our user-preferences.
 	 */
@@ -248,27 +260,36 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	public EasyEditManager easyEditManager;
 
 	/**
-	 * The logic that manipulates the model. (non-UI)<br/>
-	 * This is created in {@link #onCreate(Bundle)} and never changed afterwards.<br/>
-	 * If may be null or not reflect the current state if accessed from outside this activity.
-	 */
-	private static Logic logic;
-
-	/**
 	 * Flag indicating whether the map will be re-downloaded once the activity resumes
 	 */
 	private static boolean redownloadOnResume;
 
 	/**
 	 * Flag indicating whether data should be loaded from a file when the activity resumes.
+	 * Lock is needed because we potentially are processing results of intents before onResume runs
 	 * Set by {@link #onCreate(Bundle)}.
 	 * Overridden by {@link #redownloadOnResume}.
 	 */
 	private boolean loadOnResume;
+	private Object loadOnResumeLock = new Object();
+	
+	/**
+	 * Flag indicating if we should set the view box bounding box in onResume
+	 * Again we may be already setting the view box by an intent and don't want to overwrite it
+	 */
+	private boolean setViewBox = true;
+	private Object setViewBoxLock = new Object();
 
 	private boolean showGPS;
 	private boolean followGPS;
+	
+	/**
+	 * cache of the autodownload state
+	 */
 	private boolean autoDownload;
+	/**
+	 * cache of the bug autodownload state
+	 */
 	private boolean bugAutoDownload;
 	/**
 	 * a local copy of the desired value for {@link TrackerService#setListenerNeedsGPS(boolean)}.
@@ -279,6 +300,13 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	private GeoUrlData geoData = null;
 	private RemoteControlUrlData rcData = null;
 
+	/**
+	 * Optional bottom toolbar 
+	 */
+	android.support.v7.widget.ActionMenuView bottomBar = null;
+    
+    private FloatingActionButton follow;
+    
 	/**
 	 * The current instance of the tracker service
 	 */
@@ -300,6 +328,8 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	private PostAsyncActionHandler restart; // if set this is called to restart post authentication
 
 	private boolean gpsChecked = false; // flag to ensure that we only check once per activity life cycle
+
+	protected boolean saveSync = false; // save synchronously instead of async
 	
 	/**
 	 * While the activity is fully active (between onResume and onPause), this stores the currently active instance
@@ -333,28 +363,22 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				sensorManager = null;
 			}
 		}
-		
-		requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
-		
-		if (prefs.splitActionBarEnabled()) {
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-				getWindow().setUiOptions(ActivityInfo.UIOPTION_SPLIT_ACTION_BAR_WHEN_NARROW); // this might need to be set with bit ops
-			}
-			// besides hacking ABS, there is no equivalent method to enable this for ABS
-		} else {
-			requestWindowFeature(Window.FEATURE_ACTION_BAR_OVERLAY);
+
+		int layout = R.layout.main;
+		if (useFullScreen(prefs)) {
+			Log.d(DEBUG_TAG, "using full screen layout");
+			layout = R.layout.main_fullscreen;
 		}
-		
-		
-		rl = new RelativeLayout(getApplicationContext());
+		LinearLayout ml = (LinearLayout) getLayoutInflater().inflate(layout, null);
+		rl = (RelativeLayout) ml.findViewById(R.id.mainMap);
 		
 		if (map != null) {
+			Log.d(DEBUG_TAG, "map exists .. destroying");
 			map.onDestroy();
 		}
 		map = new Map(getApplicationContext());
 		map.setId(R.id.map_view);
-		dialogFactory = new DialogFactory(this);
-		
+
 		//Register some Listener
 		MapTouchListener mapTouchListener = new MapTouchListener();
 		map.setOnTouchListener(mapTouchListener);
@@ -365,43 +389,77 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			map.setOnGenericMotionListener(new MotionEventListener());
 		}
 		
-		rl.addView(map); 
+		rl.addView(map,0); // index 0 so that anything in the layout comes after it/on top 
 		
 		mDetector = VersionedGestureDetector.newInstance(getApplicationContext(), mapTouchListener);
 		
 		// Set up the zoom in/out controls
-		zoomControls = new ZoomControls(getApplicationContext());
+		zoomControls = new de.blau.android.views.ZoomControls(this);
+		
 		zoomControls.setOnZoomInClickListener(new View.OnClickListener() {
 			@Override
 			public void onClick(View v) {
-				getLogic().zoom(Logic.ZOOM_IN);
+				Application.getLogic().zoom(Logic.ZOOM_IN);
 				updateZoomControls();
 			}
 		});
 		zoomControls.setOnZoomOutClickListener(new View.OnClickListener() {
 			@Override
 			public void onClick(View v) {
-				getLogic().zoom(Logic.ZOOM_OUT);
+				Application.getLogic().zoom(Logic.ZOOM_OUT);
 				updateZoomControls();
 			}
 		});
 
+		// follow GPS button setup
+		follow = (FloatingActionButton)rl.findViewById(R.id.follow);
+		
+		follow.setOnClickListener(new View.OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				setFollowGPS(true);
+			}
+		});
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+			// currently can't be set in layout
+			ColorStateList followTint = ContextCompat.getColorStateList(this,R.color.follow);
+			Util.setBackgroundTintList(follow, followTint);
+		}
+		
 		RelativeLayout.LayoutParams rlp = new RelativeLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
 		rlp.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
 		rlp.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
 		rl.addView(zoomControls, rlp);
 		
-		setContentView(rl);
+		setContentView(ml);
+		
+        // Find the toolbar view inside the activity layout
+        Toolbar toolbar = (Toolbar) findViewById(R.id.mainToolbar);
+        // Sets the Toolbar to act as the ActionBar for this Activity window.
+        setSupportActionBar(toolbar);
+    
+        if (prefs.splitActionBarEnabled()) {
+        	setBottomBar((android.support.v7.widget.ActionMenuView) findViewById(R.id.bottomToolbar));
+        } else {
+        	findViewById(R.id.bottomBar).setVisibility(View.GONE);;
+        }
 		
 		// check if first time user and display something if yes
 		SavingHelper<String> savingHelperVersion = new SavingHelper<String>();
-		String lastVersion = savingHelperVersion.load(VERSION_FILE, false);
+		String lastVersion = savingHelperVersion.load(this,VERSION_FILE, false);
 		boolean newInstall = (lastVersion == null || lastVersion.equals(""));
 		
 		loadOnResume = false;
 		
-		Log.i(DEBUG_TAG, "onCreate - creating new logic");
-		logic = new Logic(map, new Profile(getApplicationContext()));
+		if (Application.getLogic()==null) {
+			Log.i(DEBUG_TAG, "onCreate - creating new logic");
+			Application.newLogic(map);
+		} else {
+			Log.i(DEBUG_TAG, "onCreate - setting new map");
+			Application.getLogic().setMap(map);
+		}
+		DataStyle p = new DataStyle(getApplicationContext()); // this has side effects and needs to be done now (for now)
+		
 		Log.d(DEBUG_TAG,"StorageDelegator dirty is " + Application.getDelegator().isDirty());
 		if (isLastActivityAvailable() && !Application.getDelegator().isDirty()) { // data was modified while we were stopped if isDirty is true
 			// Start loading after resume to ensure loading dialog can be removed afterwards
@@ -436,21 +494,21 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			}
 		}
 	
-		easyEditManager = new EasyEditManager(this, getLogic());
+		easyEditManager = new EasyEditManager(this);
 		
 		// show welcome dialog
 		if (newInstall) {
 			// newbie, display welcome dialog
 			Log.d(DEBUG_TAG,"showing welcome dialog");
-			showDialog(DialogFactory.NEWBIE);
+			Newbie.showDialog(this);
 		} else {
 			String currentVersion = getString(R.string.app_version);
 			if (lastVersion.length()<5 || !lastVersion.subSequence(0,5).equals(currentVersion.subSequence(0,5))) { // lastVersion already checked against null
 				Log.d(DEBUG_TAG,"new version");
-				showDialog(DialogFactory.NEW_VERSION);
+				NewVersion.showDialog(this);
 			}
 		}
-		savingHelperVersion.save(VERSION_FILE, getString(R.string.app_version), false);
+		savingHelperVersion.save(this,VERSION_FILE, getString(R.string.app_version), false);
 	}
 	
 	/**
@@ -476,7 +534,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	}
 	
 	/**
-	 * Loads the preferences into {@link #map} and {@link #logic}, triggers new {@inheritDoc}
+	 * Loads the preferences into {@link #map}, triggers new {@inheritDoc}
 	 */
 	@Override
 	protected void onStart() {
@@ -484,7 +542,12 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		super.onStart();
 
 		prefs = new Preferences(this);
-		getLogic().setPrefs(prefs);
+		Application.getLogic().setPrefs(prefs);
+		
+		// if we have been stopped delegator and viewbox willt not be set if our original Logic instance is still around
+		map.setDelegator(Application.getDelegator());
+		map.setViewBox(Application.getLogic().getViewBox());
+		
 		map.setPrefs(prefs);
 		map.createOverlays();
 		map.requestFocus();
@@ -507,40 +570,73 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	protected void onResume() {
 		super.onResume();
 		Log.d(DEBUG_TAG, "onResume");
-
+		final Logic logic = Application.getLogic();
+		
 		bindService(new Intent(this, TrackerService.class), this, BIND_AUTO_CREATE);
 		
 		// register received for changes in connectivity
 		IntentFilter filter = new IntentFilter("android.net.conn.CONNECTIVITY_CHANGE");
 		connectivityChangedReceiver = new ConnectivityChangedReceiver();
 		registerReceiver(connectivityChangedReceiver, filter);
-		
-		if (redownloadOnResume) {
-			redownloadOnResume = false;
-			getLogic().downloadLast();
-		} else if (loadOnResume) {
-			loadOnResume = false;
-			PostAsyncActionHandler	postLoad = new PostAsyncActionHandler() {
-				@Override
-				public void execute() {
-					if (rcData != null|| geoData != null) {
-						processIntents();
+		synchronized (loadOnResumeLock) {	
+			if (redownloadOnResume) {
+				redownloadOnResume = false;
+				logic.downloadLast();
+			} else if (loadOnResume) {
+				loadOnResume = false;
+				PostAsyncActionHandler postLoadData = new PostAsyncActionHandler() {
+					@Override
+					public void execute() {
+						if (rcData != null|| geoData != null) {
+							processIntents();
+						}
+						setupLockButton();
+						updateActionbarEditMode();
+						Mode mode = logic.getMode();
+						if (mode==Mode.MODE_EASYEDIT 
+								&& (logic.getSelectedNode() != null 
+								|| logic.getSelectedWay() != null 
+								|| (logic.getSelectedRelations() != null && logic.getSelectedRelations().size() > 0))) {
+							// need to restart whatever we were doing
+							Log.d(DEBUG_TAG,"restarting action mode");
+							easyEditManager.editElements();		
+						} else if (mode==Mode.MODE_TAG_EDIT) {
+							// de-select everything
+							logic.setSelectedNode(null);
+							logic.setSelectedWay(null);
+							logic.setSelectedRelation(null);
+						}
 					}
-					setupLockButton(getSupportActionBar());
-					updateActionbarEditMode();
+				};
+
+				PostAsyncActionHandler postLoadTasks = new PostAsyncActionHandler() {
+					@Override
+					public void execute() {
+						Mode mode = logic.getMode();
+						Task t = logic.getSelectedBug();
+						if (mode==Mode.MODE_EASYEDIT && t!= null) {
+							performBugEdit(t);
+						}
+					}
+				};
+
+				logic.loadFromFile(this,postLoadData);
+				logic.loadBugsFromFile(this,postLoadTasks);
+			} else { // loadFromFile already does this
+				synchronized (setViewBoxLock) {
+					Application.getLogic().loadEditingState(setViewBox);
 				}
-			};
-			getLogic().loadFromFile(this,postLoad);
-			getLogic().loadBugsFromFile(this,null);
-		} else { // loadFromFile already does this
-			getLogic().loadEditingState();
-			processIntents();
-			setupLockButton(getSupportActionBar());
-			updateActionbarEditMode();
-			map.invalidate();
+				processIntents();
+				setupLockButton();
+				updateActionbarEditMode();
+				map.invalidate();
+			}
 		}
-		
-		getLogic().updateProfile();
+		synchronized (setViewBoxLock) {
+			// reset in any case
+			setViewBox = true;
+		}
+		logic.updateProfile();
 		map.updateProfile();
 		
 		runningInstance = this;
@@ -550,17 +646,20 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			lastLocation = getTracker().getLastLocation();
 		}
 		
-		setShowGPS(showGPS); // reactive GPS listener if needed, this is probably not necessary since already done when reading the saved edit state
+		setShowGPS(prefs.getShowGPS()); 
 		setFollowGPS(followGPS);
-		setAutoDownload(autoDownload);
+		setAutoDownload(prefs.getAutoDownload());
+		setBugAutoDownload(prefs.getBugAutoDownload());
 		
 		map.setKeepScreenOn(prefs.isKeepScreenOnEnabled());
+		scheduleAutoLock();
 	}
 	
 	/**
 	 * Process geo an JOSM remote control intents
 	 */
 	protected void processIntents() {
+		final Logic logic = Application.getLogic();
 		if (geoData != null) {
 			Log.d(DEBUG_TAG,"got position from geo: url " + geoData.getLat() + "/" + geoData.getLon() + " storage dirty is " + Application.getDelegator().isDirty());
 			if (prefs.getDownloadRadius() != 0) { // download
@@ -570,7 +669,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 					ArrayList<BoundingBox> bbList = new ArrayList<BoundingBox>(Application.getDelegator().getBoundingBoxes());
 					ArrayList<BoundingBox> bboxes = BoundingBox.newBoxes(bbList, bbox); 
 					if (bboxes != null && bboxes.size() > 0) {
-						getLogic().downloadBox(bbox, true, null); 
+						logic.downloadBox(bbox, true, null); 
 					} else {
 						logic.getViewBox().setBorders(bbox);
 						map.invalidate();
@@ -592,7 +691,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				ArrayList<BoundingBox> bbList = new ArrayList<BoundingBox>(Application.getDelegator().getBoundingBoxes());
 				ArrayList<BoundingBox> bboxes = BoundingBox.newBoxes(bbList, rcData.getBox()); 
 				if (bboxes != null && bboxes.size() > 0) {
-					getLogic().downloadBox(rcData.getBox(), true /* logic.delegator.isDirty() */, new PostAsyncActionHandler(){
+					logic.downloadBox(rcData.getBox(), true /* logic.delegator.isDirty() */, new PostAsyncActionHandler(){
 						@Override
 						public void execute(){
 							rcDataEdit(rcData);
@@ -617,6 +716,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 * @param rcData Data of a remote control data URL.
 	 */
 	void rcDataEdit(RemoteControlUrlData rcData ) {
+		final Logic logic = Application.getLogic();
 		if (rcData.getSelect() != null) {
 			// need to actually switch to easyeditmode
 			if (logic.getMode() != Mode.MODE_EASYEDIT) { // TODO there might be states in which we don't want to exit which ever mode we are in
@@ -661,7 +761,8 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 
 	@Override
 	protected void onPause() {
-		Log.d(DEBUG_TAG, "onPause mode " + getLogic().getMode());
+		descheduleAutoLock();
+		Log.d(DEBUG_TAG, "onPause mode " + Application.getLogic().getMode());
 		runningInstance = null;
 		try {
 			unregisterReceiver(connectivityChangedReceiver);
@@ -674,7 +775,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		if (getTracker() != null) getTracker().setListener(null);
 
 		// always save editing state
-		getLogic().saveEditingState();
+		Application.getLogic().saveEditingState();
 		// onPause is the last lifecycle callback guaranteed to be called on pre-honeycomb devices
 		// on honeycomb and later, onStop is also guaranteed to be called, so we can defer saving.
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) saveData();
@@ -708,8 +809,13 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 * Save current data (state, downloaded data, changes, ...) to file(s)
 	 */
 	private void saveData() {
-		Log.i(DEBUG_TAG, "saving data");
-		getLogic().saveAsync();
+		Log.i(DEBUG_TAG, "saving data sync="+saveSync);
+		final Logic logic = Application.getLogic();
+		if (saveSync) {
+			logic.save();
+		} else {
+			logic.saveAsync();
+		}
 	}
 
 	/**
@@ -717,8 +823,9 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 * to zoom in/out.
 	 */
 	private void updateZoomControls() {
-		zoomControls.setIsZoomInEnabled(getLogic().canZoom(Logic.ZOOM_IN));
-		zoomControls.setIsZoomOutEnabled(getLogic().canZoom(Logic.ZOOM_OUT));
+		final Logic logic = Application.getLogic();
+		getControls().setIsZoomInEnabled(logic.canZoom(Logic.ZOOM_IN));
+		getControls().setIsZoomOutEnabled(logic.canZoom(Logic.ZOOM_OUT));
 	}
 	
 //	@Override
@@ -732,13 +839,13 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	@Override
 	public void onConfigurationChanged(Configuration newConfig) {
 		super.onConfigurationChanged(newConfig);
+		Application.getLogic().setMap(map);
 		Log.d(DEBUG_TAG, "onConfigurationChanged");
 		if (easyEditManager.isProcessingAction()) {
 			easyEditManager.invalidate();
 		}
 	}
 
-	
 	/**
 	 * Sets up the Action Bar.
 	 */
@@ -747,54 +854,70 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		final ActionBar actionbar = getSupportActionBar();
 		actionbar.setDisplayShowHomeEnabled(true);
 		actionbar.setDisplayShowTitleEnabled(false);
-		actionbar.setNavigationMode(ActionBar.NAVIGATION_MODE_STANDARD);
 		actionbar.setDisplayOptions(ActionBar.DISPLAY_SHOW_CUSTOM|ActionBar.DISPLAY_SHOW_HOME);
-		setupLockButton(actionbar);
-		actionbar.show();
-		setSupportProgressBarIndeterminateVisibility(false);
-		Util.resetProgressBarShown();
+		setupLockButton();
+		if (prefs.splitActionBarEnabled()) {
+			actionbar.hide();
+		} else {
+			actionbar.show();
+		}
+		FloatingActionButton follow = getFollowButton();
+		if (follow != null) {
+			if (ensureGPSProviderEnabled()) {
+				RelativeLayout.LayoutParams params = (LayoutParams) follow.getLayoutParams();
+				if (prefs.followGPSbuttonPosition().equals("LEFT")) {
+					params.addRule(RelativeLayout.ALIGN_PARENT_RIGHT,0);
+					params.addRule(RelativeLayout.ALIGN_PARENT_LEFT, RelativeLayout.TRUE);
+				} else if (prefs.followGPSbuttonPosition().equals("RIGHT")) {
+					params.addRule(RelativeLayout.ALIGN_PARENT_LEFT,0);
+					params.addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE);
+				}
+				follow.setLayoutParams(params);
+			} else {
+				follow.hide();
+			}
+		}
 	}
 	
 	/**
 	 * slightly byzantine code for mode switching follows
-	 * @param actionbar Action bar of this Activity.
 	 */
-	void setupLockButton(final ActionBar actionbar)	{
-		// inflating will crash without themed context
-		Context context =  new ContextThemeWrapper(this, prefs.lightThemeEnabled() ? R.style.Theme_customMain_Light : R.style.Theme_customMain);
-		final View lockLayout =  ((LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE)).inflate(R.layout.lock, null);
-		actionbar.setCustomView(lockLayout);
-		Mode mode = getLogic().getMode();
+	@SuppressLint("InflateParams")
+	void setupLockButton()	{
+		final Logic logic = Application.getLogic();
+		Mode mode = logic.getMode();
 		Log.d(DEBUG_TAG, "setupLockButton mode " + mode);
-		ToggleButton lock = setLock(mode);
+		//ToggleButton lock = setLock(mode);
+		FloatingActionButton lock = setLock(mode);
 		if (lock == null) {
 			return; //FIXME not good but no other alternative right now, already logged in setLock
 		}
 		if (mode == Mode.MODE_EASYEDIT) {
-			lock.setButtonDrawable(ThemeUtils.getResIdFromAttribute(Application.mainActivity,R.attr.lock));
 			lock.setTag(EASY_TAG);
 		} else if ((mode == Mode.MODE_TAG_EDIT)) {
-			lock.setButtonDrawable(ThemeUtils.getResIdFromAttribute(Application.mainActivity,R.attr.lock_tag));
 			lock.setTag(TAG_TAG);
 		} else {
-			lock.setButtonDrawable(ThemeUtils.getResIdFromAttribute(Application.mainActivity,R.attr.lock));
 			lock.setTag(EASY_TAG);
 		}
 		
-		findViewById(R.id.lock).setVisibility(View.VISIBLE);
 		lock.setLongClickable(true);
 		lock.setOnClickListener(new View.OnClickListener() {
 		    @Override
 			public void onClick(View b) {
-		        Log.d(DEBUG_TAG, "Lock pressed");
-		        if(((ToggleButton)b).isChecked()) {
+		        Log.d(DEBUG_TAG, "Lock pressed " + b.getClass().getName());
+		        int[] drawableState = ((FloatingActionButton)b).getDrawableState();
+		        Log.d(DEBUG_TAG, "Lock state length " + drawableState.length + " " + (drawableState.length==1? Integer.toHexString(drawableState[0]):"")); 
+		        if(drawableState.length == 0 ||  (drawableState[0]!=android.R.attr.state_selected && drawableState[0]!=android.R.attr.state_pressed)){
 		        	if (b.getTag().equals(EASY_TAG)) { 
-		        		getLogic().setMode(Logic.Mode.MODE_EASYEDIT);
+		        		logic.setMode(Logic.Mode.MODE_EASYEDIT);
+		        		((FloatingActionButton)b).setImageState(new int[]{android.R.attr.state_selected}, false); 
 		        	} else {
-		        		getLogic().setMode(Logic.Mode.MODE_TAG_EDIT);
-		        	}
+		        		logic.setMode(Logic.Mode.MODE_TAG_EDIT);
+		        		((FloatingActionButton)b).setImageState(new int[]{android.R.attr.state_pressed}, false); 
+		        	}	
 		        } else {
-		        	getLogic().setMode(Logic.Mode.MODE_MOVE);
+		        	logic.setMode(Logic.Mode.MODE_MOVE);
+		        	((FloatingActionButton)b).setImageState(new int[]{0}, false); 
 		        }
 		        onEditModeChanged();
 		    }
@@ -802,45 +925,47 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		lock.setOnLongClickListener(new View.OnLongClickListener() {
 		    @Override
 			public boolean onLongClick(View b) {
-		        Log.d(DEBUG_TAG, "Lock long pressed"); 
-		        if(((ToggleButton)b).isChecked()) {
-		        	if (getLogic().getMode() == Logic.Mode.MODE_TAG_EDIT) {
-		        		getLogic().setMode(Logic.Mode.MODE_EASYEDIT);
-		        		((ToggleButton)b).setButtonDrawable(ThemeUtils.getResIdFromAttribute(Application.mainActivity,R.attr.lock));
-		        		((ToggleButton)b).setChecked(true);
+		        Log.d(DEBUG_TAG, "Lock long pressed " + b.getClass().getName()); 
+		        final Logic logic = Application.getLogic();
+		        int[] drawableState = ((FloatingActionButton)b).getDrawableState();
+		        Log.d(DEBUG_TAG, "Lock state length " + drawableState.length + " " + (drawableState.length==1? Integer.toHexString(drawableState[0]):"")); 
+		        if(drawableState.length == 1 &&  (drawableState[0]==android.R.attr.state_selected || drawableState[0]==android.R.attr.state_pressed)){
+		        	if (logic.getMode() == Logic.Mode.MODE_TAG_EDIT) {
+		        		logic.setMode(Logic.Mode.MODE_EASYEDIT);
+		        		((FloatingActionButton)b).setImageState(new int[]{android.R.attr.state_selected}, false);
 		        		b.setTag(EASY_TAG);
 		        	} else {
-		        		getLogic().setMode(Logic.Mode.MODE_TAG_EDIT);
-		        		((ToggleButton)b).setButtonDrawable(ThemeUtils.getResIdFromAttribute(Application.mainActivity,R.attr.lock_tag));
-		        		((ToggleButton)b).setChecked(true);
+		        		logic.setMode(Logic.Mode.MODE_TAG_EDIT);
+		        		((FloatingActionButton)b).setImageState(new int[]{android.R.attr.state_pressed}, false);
 		        		b.setTag(TAG_TAG);
-		        	}
+		        	}	 
 		        } else {
 		        	if (b.getTag().equals(EASY_TAG)) {
-		        		getLogic().setMode(Logic.Mode.MODE_TAG_EDIT);
-	        			((ToggleButton)b).setButtonDrawable(ThemeUtils.getResIdFromAttribute(Application.mainActivity,R.attr.lock_tag));
-	        			((ToggleButton)b).setChecked(true);
+		        		logic.setMode(Logic.Mode.MODE_TAG_EDIT);
 	        			b.setTag(TAG_TAG);
 		        	} else {
-		        		getLogic().setMode(Logic.Mode.MODE_EASYEDIT);
-		        		((ToggleButton)b).setButtonDrawable(ThemeUtils.getResIdFromAttribute(Application.mainActivity,R.attr.lock));
-		        		((ToggleButton)b).setChecked(true);
+		        		logic.setMode(Logic.Mode.MODE_EASYEDIT);
 		        		b.setTag(EASY_TAG);
 		        	}
+		        	((FloatingActionButton)b).setImageState(new int[]{0}, false);
 		        }
 		        onEditModeChanged();
 		        return true;
 		    }
 		});
 	}	
+	
+	public FloatingActionButton getLock() {
+		return (FloatingActionButton) findViewById(R.id.floatingLock);
+	}
 		
 	/**
 	 * Set lock button to locked or unlocked depending on the edit mode
 	 * @param mode Program mode.
 	 * @return Button to display checked/unchecked states.
 	 */
-	private ToggleButton setLock(Logic.Mode mode) {
-		ToggleButton lock = (ToggleButton) findViewById(R.id.lock);
+	private FloatingActionButton setLock(Logic.Mode mode) {
+		FloatingActionButton lock = getLock();
 		if (lock==null) {
 			Log.d(DEBUG_TAG, "couldn't find lock button");
 			return null;
@@ -848,24 +973,26 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		switch (mode) {
 		case MODE_EASYEDIT:
 		case MODE_ALIGN_BACKGROUND:
+			lock.setImageState(new int[]{android.R.attr.state_selected}, false); 
+			break;
 		case MODE_TAG_EDIT:
-			lock.setChecked(true);
+			lock.setImageState(new int[]{android.R.attr.state_pressed}, false); 
 			break;
 		default: 
 			mode = Mode.MODE_MOVE;
-			lock.setChecked(false);
+			lock.setImageState(new int[0], false); 
 		}
-		getLogic().setMode(mode); 
+		Application.getLogic().setMode(mode); 
 		return lock; // for convenience
 	}
 
 	public void setMode(Logic.Mode mode) {
-		getLogic().setMode(mode); 
+		Application.getLogic().setMode(mode); 
 	}
 	
 	public void updateActionbarEditMode() {
 		Log.d(DEBUG_TAG, "updateActionbarEditMode");
-		setLock(getLogic().getMode());
+		setLock(Application.getLogic().getMode());
 		supportInvalidateOptionsMenu();
 	}
 	
@@ -876,46 +1003,56 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	
 	/**
 	 * Creates the menu from the XML file "main_menu.xml".<br> {@inheritDoc}
+	 * 
+	 * Note for not entirely clear reasons *:setShowAsAction doesn't work in the menu definition and has to be done programmatically here.
 	 */
- 	@Override
-	public boolean onCreateOptionsMenu(final Menu menu) {
+ 	@SuppressLint("InflateParams")
+	@Override
+	public boolean onCreateOptionsMenu(final Menu m) {
 		Log.d(DEBUG_TAG, "onCreateOptionsMenu");
-		final MenuInflater inflater = getSupportMenuInflater();
-		inflater.inflate(R.menu.main_menu, menu);
-		
-		// only show camera icon if we have a camera, and a camera app is installed 
-		PackageManager pm = getPackageManager();
-		Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-		if (pm.hasSystemFeature(PackageManager.FEATURE_CAMERA) && cameraIntent.resolveActivity(getPackageManager()) != null) {
-			menu.findItem(R.id.menu_camera).setShowAsAction(prefs.showCameraAction() ? MenuItem.SHOW_AS_ACTION_ALWAYS: MenuItem.SHOW_AS_ACTION_NEVER);
-		} else {
-			menu.findItem(R.id.menu_camera).setVisible(false);
+		// determine how man icons have room
+		MenuUtil menuUtil = new MenuUtil(this);
+		Menu menu = m;
+		if (getBottomBar() != null) {
+			menu = getBottomBar().getMenu();
+			android.support.v7.widget.ActionMenuView.OnMenuItemClickListener listener = new android.support.v7.widget.ActionMenuView.OnMenuItemClickListener() {
+				@Override
+				public boolean onMenuItemClick(MenuItem item) {
+					return onOptionsItemSelected(item);
+				}	
+			};
+			getBottomBar().setOnMenuItemClickListener(listener);
+			Log.d(DEBUG_TAG,"inflated main menu on to bottom toolbar");
+		} 
+		if (menu.size() == 0) {
+			menu.clear();
+			final MenuInflater inflater = getMenuInflater();
+			inflater.inflate(R.menu.main_menu, menu);
 		}
-		
+
 		boolean networkConnected = NetworkStatus.isConnected(this);
 		boolean gpsProviderEnabled = ensureGPSProviderEnabled();
-		
 		menu.findItem(R.id.menu_gps_show).setEnabled(gpsProviderEnabled).setChecked(showGPS);
 		menu.findItem(R.id.menu_gps_follow).setEnabled(gpsProviderEnabled).setChecked(followGPS);
 		menu.findItem(R.id.menu_gps_goto).setEnabled(gpsProviderEnabled);
 		menu.findItem(R.id.menu_gps_start).setEnabled(getTracker() != null && !getTracker().isTracking() && gpsProviderEnabled);
 		menu.findItem(R.id.menu_gps_pause).setEnabled(getTracker() != null && getTracker().isTracking() && gpsProviderEnabled);
-		menu.findItem(R.id.menu_gps_autodownload).setEnabled(getTracker() != null && gpsProviderEnabled && networkConnected).setChecked(autoDownload);
-		menu.findItem(R.id.menu_transfer_bugs_autodownload).setEnabled(getTracker() != null && gpsProviderEnabled && networkConnected).setChecked(bugAutoDownload);
+		menu.findItem(R.id.menu_gps_autodownload).setEnabled(getTracker() != null && gpsProviderEnabled && networkConnected).setChecked(getAutoDownload());
+		menu.findItem(R.id.menu_transfer_bugs_autodownload).setEnabled(getTracker() != null && gpsProviderEnabled && networkConnected).setChecked(getBugAutoDownload());
 		
 		menu.findItem(R.id.menu_gps_clear).setEnabled(getTracker() != null && getTracker().getTrackPoints() != null && getTracker().getTrackPoints().size() > 0);
 		menu.findItem(R.id.menu_gps_goto_start).setEnabled(getTracker() != null && getTracker().getTrackPoints() != null && getTracker().getTrackPoints().size() > 0);
 		menu.findItem(R.id.menu_gps_import).setEnabled(getTracker() != null);
 		menu.findItem(R.id.menu_gps_upload).setEnabled(getTracker() != null && getTracker().getTrackPoints() != null && getTracker().getTrackPoints().size() > 0 && NetworkStatus.isConnected(this));
-
-
+		
+		final Logic logic = Application.getLogic();
 		MenuItem undo = menu.findItem(R.id.menu_undo);
-		undo.setVisible(getLogic().getMode() != Mode.MODE_MOVE && (getLogic().getUndo().canUndo() || getLogic().getUndo().canRedo()));
-		View undoView = undo.getActionView();
+		undo.setVisible(logic.getMode() != Mode.MODE_MOVE && (logic.getUndo().canUndo() || logic.getUndo().canRedo()));
+		View undoView = MenuItemCompat.getActionView(undo);
 		if (undoView == null) { // FIXME this is a temp workaround for pre-11 Android, we could probably simply always do the following 
+			Log.d(DEBUG_TAG,"undoView null");
 			Context context =  new ContextThemeWrapper(this, prefs.lightThemeEnabled() ? R.style.Theme_customMain_Light : R.style.Theme_customMain);
 			undoView =  ((LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE)).inflate(R.layout.undo_action_view, null);
-			undo.setActionView(undoView);
 		}
 		undoView.setOnClickListener(undoListener);
 		undoView.setOnLongClickListener(undoListener);
@@ -936,6 +1073,21 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		menu.findItem(R.id.menu_voice).setVisible(false); // don't display button for now
 //		menu.findItem(R.id.menu_voice).setEnabled(networkConnected && prefs.voiceCommandsEnabled()).setVisible(prefs.voiceCommandsEnabled());
 		
+		menuUtil.setShowAlways(menu);
+		// only show camera icon if we have a camera, and a camera app is installed 
+		PackageManager pm = getPackageManager();
+		Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+		if (pm.hasSystemFeature(PackageManager.FEATURE_CAMERA) && cameraIntent.resolveActivity(getPackageManager()) != null) {
+			MenuItemCompat.setShowAsAction(menu.findItem(R.id.menu_camera),prefs.showCameraAction() ? MenuItemCompat.SHOW_AS_ACTION_ALWAYS: MenuItemCompat.SHOW_AS_ACTION_NEVER);
+		} else {
+			MenuItem mi = menu.findItem(R.id.menu_camera).setVisible(false);
+			MenuItemCompat.setShowAsAction(mi,MenuItemCompat.SHOW_AS_ACTION_NEVER);
+		}
+		
+		if (getBottomBar()!=null) {
+			//menuUtil.evenlyDistributedToolbar(getBottomToolbar());
+		}
+
 		return true;
 	}
 
@@ -947,13 +1099,26 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	public boolean onOptionsItemSelected(final MenuItem item) {
 		Log.d(DEBUG_TAG, "onOptionsItemSelected");
 		final Server server = prefs.getServer();
+		final Logic logic = Application.getLogic();
 		switch (item.getItemId()) {
 		case R.id.menu_config:
 			PrefEditor.start(this);
 			return true;
 			
 		case R.id.menu_find:
-			showDialog(DialogFactory.SEARCH);
+			SearchForm.showDialog(this, map.getViewBox(), new de.blau.android.util.SearchItemFoundCallback() {
+				private static final long serialVersionUID = 1L;
+
+				@Override
+				public void onItemFound(SearchResult sr) {
+					// turn this off or else we get bounced back to our current GPS position
+					setFollowGPS(false);
+					getMap().setFollowGPS(false);
+					logic.setZoom(19);
+					getMap().getViewBox().moveTo((int) (sr.getLon() * 1E7d), (int)(sr.getLat()* 1E7d));
+					getMap().invalidate();
+				}
+			});
 			return true;
 			
 		case R.id.menu_help:
@@ -996,7 +1161,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			} // else moan? without GPS enabled this shouldn't be selectable currently
 			if (gotoLoc != null) {
 				map.getViewBox().moveTo((int) (gotoLoc.getLongitude() * 1E7d), (int) (gotoLoc.getLatitude() * 1E7d));
-				getLogic().setZoom(19);
+				logic.setZoom(19);
 				map.setLocation(gotoLoc);
 				map.invalidate();
 			}
@@ -1029,7 +1194,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 					oAuthHandshake(server, new PostAsyncActionHandler() {
 						@Override
 						public void execute() {
-							showDialog(DialogFactory.GPX_UPLOAD);
+							GpxUpload.showDialog(Main.this);
 						}
 					});
 					if (server.getOAuth()) { // if still set
@@ -1037,10 +1202,10 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 						return true;
 					} 
 				}	
-				showDialog(DialogFactory.GPX_UPLOAD);
+				GpxUpload.showDialog(this);
 				// performTrackUpload("Test","Test",Visibility.PUBLIC);
 			} else {
-				showDialog(DialogFactory.NO_LOGIN_DATA);
+				ErrorAlert.showDialog(this,ErrorCodes.NO_LOGIN_DATA);
 			}
 			return true;
 
@@ -1062,13 +1227,13 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				setFollowGPS(false);
 				map.setFollowGPS(false);
 				map.getViewBox().moveTo(l.get(0).getLon(), l.get(0).getLat());
-				getLogic().setZoom(19);
+				logic.setZoom(19);
 				map.invalidate();
 			}
 			return true;
 
 		case R.id.menu_gps_autodownload:
-			setAutoDownload(!autoDownload);
+			setAutoDownload(!getAutoDownload());
 			return true;
 			
 		case R.id.menu_transfer_download_current:
@@ -1124,7 +1289,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			
 		case R.id.menu_transfer_save_file:
 			if (Application.getDelegator() == null) return true;
-			showDialog(DialogFactory.SAVE_FILE);
+			SaveFile.showDialog(this);
 //			showFileChooser(WRITE_OSM_FILE_SELECT_CODE);
 			return true;
 		
@@ -1155,7 +1320,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			return true;
 			
 		case R.id.menu_transfer_bugs_autodownload:
-			setBugAutoDownload(!bugAutoDownload);
+			setBugAutoDownload(!getBugAutoDownload());
 			return true;
 			
 		case R.id.menu_undo:
@@ -1172,14 +1337,14 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			return true;
 			
 		case R.id.menu_tools_background_align:
-			Mode oldMode = getLogic().getMode() != Mode.MODE_ALIGN_BACKGROUND ? getLogic().getMode() : Mode.MODE_MOVE; // protect against weird state
+			Mode oldMode = logic.getMode() != Mode.MODE_ALIGN_BACKGROUND ? logic.getMode() : Mode.MODE_MOVE; // protect against weird state
 			backgroundAlignmentActionModeCallback = new BackgroundAlignmentActionModeCallback(oldMode);
-			getLogic().setMode(Mode.MODE_ALIGN_BACKGROUND); //NOTE needs to be after instance creation
-			startActionMode(getBackgroundAlignmentActionModeCallback());
+			logic.setMode(Mode.MODE_ALIGN_BACKGROUND); //NOTE needs to be after instance creation
+			startSupportActionMode(getBackgroundAlignmentActionModeCallback());
 			return true;
 			
 		case R.id.menu_tools_background_properties:
-			showDialog(DialogFactory.BACKGROUND_PROPERTIES);
+			BackgroundProperties.showDialog(this);
 			return true;
 			
 		case R.id.menu_tools_oauth_reset: // reset the current OAuth tokens
@@ -1249,6 +1414,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				getTracker().stopAutoDownload();
 			}
 		}
+		prefs.setAutoDownload(b);
 		Log.d(DEBUG_TAG,"Setting autoDownload to " + autoDownload);
 		triggerMenuInvalidation();
 	}
@@ -1267,6 +1433,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				getTracker().stopBugAutoDownload();
 			}
 		}
+		prefs.setBugAutoDownload(b);
 		Log.d(DEBUG_TAG,"Setting bugAutoDownload to " + bugAutoDownload);
 		triggerMenuInvalidation();
 	}
@@ -1288,6 +1455,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			map.setLocation(null);
 			disableLocationUpdates();
 		}
+		prefs.setShowGPS(show);
 		map.invalidate();
 		triggerMenuInvalidation();
 	}
@@ -1335,6 +1503,10 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			if (follow) {
 				setShowGPS(true);
 			}
+			FloatingActionButton followButton = getFollowButton();
+			if (followButton != null) {
+				followButton.setEnabled(!follow);
+			}
 			map.setFollowGPS(follow);
 			triggerMenuInvalidation();
 		}
@@ -1345,10 +1517,9 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	}
 	
 	private void toggleShowGPS() {
-		boolean newState = !showGPS;
+		boolean newState = !getShowGPS();
 		setShowGPS(newState);
 	}
-	
 	
 	private void toggleFollowGPS() {
 		boolean newState = !followGPS;
@@ -1383,50 +1554,13 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 */
 	private void onMenuDownloadCurrent(boolean add) {
 		Log.d(DEBUG_TAG, "onMenuDownloadCurrent");
-		if (getLogic().hasChanges() && !add) {
-			showDialog(DialogFactory.DOWNLOAD_CURRENT_WITH_CHANGES);
+		if (Application.getLogic().hasChanges() && !add) {
+			DownloadCurrentWithChanges.showDialog(this);
 		} else {
 			performCurrentViewHttpLoad(add);
 		}
 	}
-
-	/**
-	 * Uses {@link DialogFactory} to create Dialogs<br> {@inheritDoc}
-	 */
-	@Override
-	protected Dialog onCreateDialog(final int id) {
-		Log.d(DEBUG_TAG, "onCreateDialog");
-		Dialog dialog = dialogFactory.create(id);
-		if (dialog != null) {
-			return dialog;
-		}
-		return super.onCreateDialog(id);
-	}
 	
-	/**
-	 * Prepare the fields of dialogs before they are shown. Only some need this special
-	 * handling.
-	 * @param id Dialog ID number.
-	 * @param dialog Dialog object.
-	 */
-	@Override
-	protected void onPrepareDialog(int id, Dialog dialog) {
-		Log.d(DEBUG_TAG, "onPrepareDialog");
-		super.onPrepareDialog(id, dialog);
-		if (dialog instanceof AlertDialog) {
-			AlertDialog ad = (AlertDialog)dialog;
-			switch (id) {
-			case DialogFactory.CONFIRM_UPLOAD:
-				TextView changes = (TextView)ad.findViewById(R.id.upload_changes);
-				changes.setText(getString(R.string.confirm_upload_text, getPendingChanges()));
-				break;
-			case DialogFactory.SEARCH:
-				dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
-				break;
-			}
-		}
-	}
-
 	/**
 	 * {@inheritDoc}
 	 */
@@ -1434,6 +1568,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	protected void onActivityResult(final int requestCode, final int resultCode, final Intent data) {
 		Log.d(DEBUG_TAG, "onActivityResult");
 		super.onActivityResult(requestCode, resultCode, data);
+		final Logic logic = Application.getLogic();
 		if (requestCode == REQUEST_BOUNDING_BOX && data != null) {
 			handleBoxPickerResult(resultCode, data);
 		} else if (requestCode == REQUEST_EDIT_TAG && resultCode == RESULT_OK && data != null) {
@@ -1443,7 +1578,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	        Uri uri = data.getData();
 	        Log.d(DEBUG_TAG, "Read file Uri: " + uri.toString());
 	        try {
-				getLogic().readOsmFile(uri, false);
+				logic.readOsmFile(uri, false);
 			} catch (FileNotFoundException e) {
 				try {
 					Toast.makeText(getApplicationContext(),getResources().getString(R.string.toast_file_not_found, uri.toString()), Toast.LENGTH_LONG).show();
@@ -1456,7 +1591,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			// Get the Uri of the selected file 
 	        Uri uri = data.getData();
 	        Log.d(DEBUG_TAG, "Write file Uri: " + uri.toString());
-	        getLogic().writeOsmFile(uri.getPath());
+	        logic.writeOsmFile(uri.getPath());
 	        map.invalidate();
 		} else if (requestCode == READ_GPX_FILE_SELECT_CODE && resultCode == RESULT_OK) {
 			// Get the Uri of the selected file 
@@ -1464,7 +1599,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	        Log.d(DEBUG_TAG, "Read gpx file Uri: " + uri.toString());
 	        if (getTracker() != null) {
 	        	if (getTracker().getTrackPoints().size() > 0 ) {
-	        		DialogFactory.createExistingTrackDialog(this, uri).show();
+	        		ImportTrack.showDialog(this, uri);
 	        	} else {
 	        		getTracker().stopTracking(false);
 	        		try {
@@ -1499,6 +1634,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				map.invalidate();
 			}
 		}
+		scheduleAutoLock();
 	}
 
 	/**
@@ -1519,8 +1655,11 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			if (resultCode == RESULT_OK) {
 				performHttpLoad(box);
 			} else if (resultCode == RESULT_CANCELED) { // 
-				Log.d(DEBUG_TAG,"opening empty map on " + (box != null ? box.toString() : " null bbox"));
-				openEmptyMap(box); // we may have a valid box
+				synchronized (setViewBoxLock) {
+					setViewBox = false; // stop setting the view box in onResume
+					Log.d(DEBUG_TAG,"opening empty map on " + (box != null ? box.toString() : " null bbox"));
+					openEmptyMap(box); // we may have a valid box
+				}
 			}
 		} catch (OsmException e) {
 			//Values should be done checked in LocationPicker.
@@ -1534,16 +1673,19 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 *             (various data can be attached to Intent "extras").
 	 */
 	private void handlePropertyEditorResult(final Intent data) {
+		final Logic logic = Application.getLogic();
 		Bundle b = data.getExtras();
 		if (b != null && b.containsKey(PropertyEditor.TAGEDIT_DATA)) {
 			// Read data from extras
 			PropertyEditorData[] result = PropertyEditorData.deserializeArray(b.getSerializable(PropertyEditor.TAGEDIT_DATA));
 			// FIXME Problem saved data may not be read at this point, load here 
-			if (loadOnResume) { 
-				loadOnResume = false;
-				Log.d(DEBUG_TAG,"handlePropertyEditorResult loading data");
-				getLogic().syncLoadFromFile(); // sync load
-				Application.getTaskStorage().readFromFile();
+			synchronized (loadOnResumeLock) {
+				if (loadOnResume) { 
+					loadOnResume = false;
+					Log.d(DEBUG_TAG,"handlePropertyEditorResult loading data");
+					logic.syncLoadFromFile(); // sync load
+					Application.getTaskStorage().readFromFile(this);
+				}
 			}
 			for (PropertyEditorData editorData:result) {
 				if (editorData == null) {
@@ -1552,24 +1694,24 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				}
 				if (editorData.tags != null) {
 					Log.d(DEBUG_TAG,"handlePropertyEditorResult setting tags");
-					getLogic().setTags(editorData.type, editorData.osmId, editorData.tags);		
+					logic.setTags(editorData.type, editorData.osmId, editorData.tags);		
 				}
 				if (editorData.parents != null) {
 					Log.d(DEBUG_TAG,"handlePropertyEditorResult setting parents");
-					getLogic().updateParentRelations(editorData.type, editorData.osmId, editorData.parents);		
+					logic.updateParentRelations(editorData.type, editorData.osmId, editorData.parents);		
 				}
 				if (editorData.members != null && editorData.type.equals(Relation.NAME)) {
 					Log.d(DEBUG_TAG,"handlePropertyEditorResult setting members");
-					getLogic().updateRelation(editorData.osmId, editorData.members);
+					logic.updateRelation(editorData.osmId, editorData.members);
 				}
 			}
 			// this is very expensive: getLogic().saveAsync(); // if nothing was changed the dirty flag wont be set and the save wont actually happen 
 		}
-		if ((getLogic().getMode()==Mode.MODE_EASYEDIT && easyEditManager != null && !easyEditManager.isProcessingAction()) || getLogic().getMode()==Mode.MODE_TAG_EDIT) {
+		if ((logic.getMode()==Mode.MODE_EASYEDIT && easyEditManager != null && !easyEditManager.isProcessingAction()) || logic.getMode()==Mode.MODE_TAG_EDIT) {
 			// not in an easy edit mode, de-select objects avoids inconsistent visual state 
-			getLogic().setSelectedNode(null);
-			getLogic().setSelectedWay(null);
-			getLogic().setSelectedRelation(null);
+			logic.setSelectedNode(null);
+			logic.setSelectedWay(null);
+			logic.setSelectedRelation(null);
 		} else {
 			// invalidate the action mode menu ... updates the state of the undo button
 			supportInvalidateOptionsMenu();
@@ -1626,7 +1768,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	}
 
 	public void performCurrentViewHttpLoad(boolean add) {
-		getLogic().downloadCurrent(add);
+		Application.getLogic().downloadCurrent(add);
 		if (prefs.isOpenStreetBugsEnabled()) { // always adds bugs for now
 			TransferTasks.downloadBox(this, prefs.getServer(), map.getViewBox().copy(), true, new PostAsyncActionHandler() {
 				@Override
@@ -1638,11 +1780,11 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	}
 
 	private void performHttpLoad(final BoundingBox box) {
-		getLogic().downloadBox(box, false, null);
+		Application.getLogic().downloadBox(box, false, null);
 	}
 
 	private void openEmptyMap(final BoundingBox box) {
-		getLogic().newEmptyMap(box);
+		Application.getLogic().newEmptyMap(box);
 	}
 
 	/**
@@ -1652,25 +1794,25 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 *                       should be closed or kept open.
 	 */
 	public void performUpload(final String comment, final String source, final boolean closeChangeset) {
-		dismissDialog(DialogFactory.CONFIRM_UPLOAD);
+		final Logic logic = Application.getLogic();
 		final Server server = prefs.getServer();
 
 		if (server != null && server.isLoginSet()) {
-			boolean hasDataChanges = getLogic().hasChanges();
+			boolean hasDataChanges = logic.hasChanges();
 			boolean hasBugChanges = !Application.getTaskStorage().isEmpty() && Application.getTaskStorage().hasChanges();
 			if (hasDataChanges || hasBugChanges) {
 				if (hasDataChanges) {
-					getLogic().upload(comment, source, closeChangeset);
+					logic.upload(comment, source, closeChangeset);
 				}
 				if (hasBugChanges) {
 					TransferTasks.upload(this, server);
 				}
-				getLogic().checkForMail();
+				logic.checkForMail();
 			} else {
 				Toast.makeText(getApplicationContext(), R.string.toast_no_changes, Toast.LENGTH_LONG).show();
 			}
 		} else {
-			showDialog(DialogFactory.NO_LOGIN_DATA);
+			ErrorAlert.showDialog(this,ErrorCodes.NO_LOGIN_DATA);
 		}
 	}
 	
@@ -1679,13 +1821,14 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 */
 	public void performTrackUpload(final String description, final String tags, final Visibility visibility) {
 		
+		final Logic logic = Application.getLogic();
 		final Server server = prefs.getServer();
 
 		if (server != null && server.isLoginSet()) {
-			getLogic().uploadTrack(getTracker().getTrack(), description, tags, visibility);
-			getLogic().checkForMail();
+			logic.uploadTrack(getTracker().getTrack(), description, tags, visibility);
+			logic.checkForMail();
 		} else {
-			showDialog(DialogFactory.NO_LOGIN_DATA);
+			ErrorAlert.showDialog(this,ErrorCodes.NO_LOGIN_DATA);
 		}
 	}
 	
@@ -1697,27 +1840,82 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		final Server server = prefs.getServer();
 
 		if (server != null && server.isLoginSet()) {
-			if (getLogic().hasChanges()) {
+			if (Application.getLogic().hasChanges()) {
 				if (server.needOAuthHandshake()) {
 					oAuthHandshake(server, new PostAsyncActionHandler() {
 						@Override
 						public void execute() {
-							showDialog(DialogFactory.CONFIRM_UPLOAD);
+							ConfirmUpload.showDialog(Main.this);
 						}
 					});
 					if (server.getOAuth()) // if still set
 						Toast.makeText(getApplicationContext(), R.string.toast_oauth, Toast.LENGTH_LONG).show();
 					return;
 				} 
-				showDialog(DialogFactory.CONFIRM_UPLOAD);
+				ConfirmUpload.showDialog(Main.this);
 			} else {
 				Toast.makeText(getApplicationContext(), R.string.toast_no_changes, Toast.LENGTH_LONG).show();
 			}		
 		} else {
-			showDialog(DialogFactory.NO_LOGIN_DATA);
+			ErrorAlert.showDialog(this,ErrorCodes.NO_LOGIN_DATA);
 		}
 	}
 	
+	public void hideBottomBar() {
+		ActionMenuView bottomToolbar = getBottomBar();
+		if (bottomToolbar != null) {
+			bottomToolbar.setVisibility(View.GONE);
+		}
+	}
+	
+	public void showBottomBar() {
+		ActionMenuView bottomToolbar = getBottomBar();
+		if (bottomToolbar != null) {
+			bottomToolbar.setVisibility(View.VISIBLE);
+		}
+	}
+	
+	public void hideLock() {
+		FloatingActionButton lock = getLock();
+		if (lock != null) {
+			lock.hide();
+		}
+	}
+	
+	public void showLock() {
+		FloatingActionButton lock = getLock();
+		if (lock != null) {
+			lock.show();
+		}
+	}
+	
+	void hideControls() {
+		ActionBar actionbar = getSupportActionBar();
+		if (actionbar != null) {
+			actionbar.hide();
+		}
+		hideBottomBar();
+		hideLock();
+		ZoomControls zoomControls = getControls();
+		if (zoomControls != null) {
+			zoomControls.hide();
+		}
+		hideFollowButton();
+	}
+	
+	void showControls() {
+		ActionBar actionbar = getSupportActionBar();
+		if (actionbar != null && !prefs.splitActionBarEnabled()) {
+			actionbar.show();
+		}
+		showBottomBar();
+		showLock();
+		ZoomControls zoomControls = getControls();
+		if (zoomControls != null) {
+			zoomControls.show();
+		}
+		showFollowButton();
+	}
 	
 	/**
 	 * @param server Server properties.
@@ -1725,9 +1923,9 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 */
 	@SuppressLint({ "SetJavaScriptEnabled", "InlinedApi", "NewApi" })
 	public void oAuthHandshake(Server server, PostAsyncActionHandler restart) {
+		descheduleAutoLock();
 		this.restart = restart;
-		ActionBar actionbar = getSupportActionBar();
-		actionbar.hide();
+		hideControls();
 		Server[] s = {server};
 		String url = s[0].getBaseURL();
 		OAuthHelper oa;
@@ -1736,7 +1934,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		}
 		catch (OsmException oe) {
 			server.setOAuth(false); // ups something went wrong turn oauth off
-			actionbar.show();
+			showControls();
 			Toast.makeText(getApplicationContext(), getResources().getString(R.string.toast_no_oauth), Toast.LENGTH_LONG).show();
 			return;
 		}
@@ -1745,7 +1943,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		String authUrl = oa.getRequestToken();
 		if (authUrl == null) {
 			Toast.makeText(getApplicationContext(), getResources().getString(R.string.toast_oauth_handshake_failed), Toast.LENGTH_LONG).show();
-			actionbar.show();
+			showControls();
 			return;
 		}
 		Log.d(DEBUG_TAG, "authURl " + authUrl);
@@ -1780,7 +1978,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		    @Override
 		    public void onPageStarted(WebView view, String url, Bitmap favicon){
 		    	if (times < LOADS) {
-		    		showDialog(DialogFactory.PROGRESS_OAUTH);
+		    		Progress.showDialog(Main.this, Progress.PROGRESS_OAUTH);
 		    	}
 		    }
 		    
@@ -1788,10 +1986,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		    public void onPageFinished(WebView view, String url){
 		    	if (times < LOADS) {
 		    		times++;
-		    		try {
-		    			dismissDialog(DialogFactory.PROGRESS_OAUTH);
-		    		} catch (IllegalArgumentException ignored) {
-		    		}
+		    		Progress.dismissDialog(Main.this, Progress.PROGRESS_OAUTH);
 		    	}
 		    }
 		}
@@ -1806,8 +2001,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	public void finishOAuth() {
 		Log.d(DEBUG_TAG,"finishOAuth");
 		rl.removeView(oAuthWebView);
-		ActionBar actionbar = getSupportActionBar();
-		actionbar.show();
+		showControls();
 		try {
 			// the below loadUrl, even though the "official" way to do it,
 			// seems to be prone to crash on some devices.
@@ -1829,9 +2023,10 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 * Starts the LocationPicker activity for requesting a location.
 	 */
 	public void gotoBoxPicker() {
+		descheduleAutoLock();
 		Intent intent = new Intent(getApplicationContext(), BoxPicker.class);
-		if (getLogic().hasChanges()) {
-			DialogFactory.createDataLossActivityDialog(this, intent, REQUEST_BOUNDING_BOX).show();
+		if (Application.getLogic().hasChanges()) {
+			DataLossActivity.showDialog(this, intent, REQUEST_BOUNDING_BOX);
 		} else {
 			startActivityForResult(intent, REQUEST_BOUNDING_BOX);
 		}
@@ -1842,12 +2037,15 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 * @param focusOn if not null focus on the value field of this key.
 	 * @param applyLastAddressTags add address tags to the object being edited.
 	 * @param showPresets Boolean flag indication to show or hide presets.
+	 * @param askForName TODO
 	 */
-	public void performTagEdit(final OsmElement selectedElement, String focusOn, boolean applyLastAddressTags, boolean showPresets) {
+	public void performTagEdit(final OsmElement selectedElement, String focusOn, boolean applyLastAddressTags, boolean showPresets, boolean askForName) {
+		descheduleAutoLock();
+		final Logic logic = Application.getLogic();
 		if (selectedElement instanceof Node) {
-			getLogic().setSelectedNode((Node) selectedElement);
+			logic.setSelectedNode((Node) selectedElement);
 		} else if (selectedElement instanceof Way) {
-			getLogic().setSelectedWay((Way) selectedElement);
+			logic.setSelectedWay((Way) selectedElement);
 		}
 	
 		if (selectedElement != null) {
@@ -1856,13 +2054,13 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				PropertyEditorData[] single = new PropertyEditorData[1];
 				single[0] = new PropertyEditorData(selectedElement, focusOn);
 				PropertyEditor.startForResult(this, single, applyLastAddressTags,
-						showPresets, REQUEST_EDIT_TAG);
+						showPresets, askForName, REQUEST_EDIT_TAG);
 			}
 		}
 	}
 	
 	public void performTagEdit(final ArrayList<OsmElement> selection, boolean applyLastAddressTags, boolean showPresets) {
-		
+		descheduleAutoLock();
 		ArrayList<PropertyEditorData> multiple = new ArrayList<PropertyEditorData>();
 		StorageDelegator storageDelegator = Application.getDelegator();
 		for (OsmElement e:selection) {
@@ -1876,9 +2074,29 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		}
 		PropertyEditorData[] multipleArray = multiple.toArray(new PropertyEditorData[multiple.size()]);
 		PropertyEditor.startForResult(this, multipleArray, applyLastAddressTags,
-				showPresets, REQUEST_EDIT_TAG);
+				showPresets, false, REQUEST_EDIT_TAG);
 	}
 
+	/**
+	 * Edit an OpenStreetBug.
+	 * @param bug The bug to edit.
+	 */
+	public void performBugEdit(final Task bug) {
+		Log.d(DEBUG_TAG, "editing bug:"+bug);
+		descheduleAutoLock();
+		Application.getLogic().setSelectedBug(bug);
+		FragmentManager fm = getSupportFragmentManager();
+		FragmentTransaction ft = fm.beginTransaction();
+		Fragment prev = fm.findFragmentByTag("fragment_bug");
+		if (prev != null) {
+			ft.remove(prev);
+		}
+		ft.commit();
+
+		TaskFragment bugDialog = TaskFragment.newInstance(bug);
+		bugDialog.show(fm, "fragment_bug");
+	}
+	
 	/**
 	 * potentially do some special stuff for invoking undo and exiting
 	 */
@@ -1892,7 +2110,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			return;
 		}
 		if (prefs.useBackForUndo()) {
-			String name = logic.undo();
+			String name = Application.getLogic().undo();
 			if (name != null)
 				Toast.makeText(getApplicationContext(), getResources().getString(R.string.undo) + ": " + name, Toast.LENGTH_SHORT).show();
 			else
@@ -1919,6 +2137,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	            		getTracker().stopBugAutoDownload();
 	            	}
 	                try {
+	                	saveSync = true;
 						Main.super.onBackPressed();
 					} catch (Exception e) {
 						// silently ignore .. might be Android confusion
@@ -1950,35 +2169,43 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		@Override
 		public void onClick(View arg0) {
 			Log.d(DEBUG_TAG,"normal click");
+			final Logic logic = Application.getLogic();
 			String name = logic.undo();
 			if (name != null) {
 				Toast.makeText(getApplicationContext(), getResources().getString(R.string.undo) + ": " + name, Toast.LENGTH_SHORT).show();
 			} else {
 				Toast.makeText(getApplicationContext(), getResources().getString(R.string.undo_nothing), Toast.LENGTH_SHORT).show();
 			}
-			// check that we haven't just removed a selected element
-			if (getLogic().resyncSelected()) {
-				// only need to test if anything at all is still selected
-				if (getLogic().selectedNodesCount() + getLogic().selectedWaysCount() + getLogic().selectedRelationsCount() == 0 ) {
-					easyEditManager.finish();
-				}
-			}
+			resync(logic);
 			map.invalidate();
 		}
 
 		@Override
 		public boolean onLongClick(View v) {
 			Log.d(DEBUG_TAG,"long click");
-			UndoStorage undo = getLogic().getUndo();
+			final Logic logic = Application.getLogic();
+			UndoStorage undo = logic.getUndo();
 			if (undo.canUndo() || undo.canRedo()) {
 				UndoDialogFactory.showUndoDialog(Main.this, logic, undo);
 			} else {
 				Toast.makeText(getApplicationContext(), getResources().getString(R.string.undo_nothing), Toast.LENGTH_SHORT).show();
 			}
+			resync(logic);
+			map.invalidate();
 			return true;
 		}
+		
+		void resync (final Logic logic) {
+			// check that we haven't just removed a selected element
+			if (logic.resyncSelected()) {
+				// only need to test if anything at all is still selected
+				if (logic.selectedNodesCount() + logic.selectedWaysCount() + logic.selectedRelationsCount() == 0 ) {
+					easyEditManager.finish();
+				}
+			}
+		}
 	}
-	
+
 	/**
 	 * A TouchListener for all gestures made on the touchscreen.
 	 * 
@@ -1994,13 +2221,14 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		
 		@Override
 		public boolean onTouch(final View v, final MotionEvent m) {
+			scheduleAutoLock();
 			// Log.d("MapTouchListener", "onTouch");
 			if (m.getAction() == MotionEvent.ACTION_DOWN) {
 				// Log.d("MapTouchListener", "onTouch ACTION_DOWN");
 				clickedBugs = null;
 				clickedPhotos = null;
 				clickedNodesAndWays = null;
-				getLogic().handleTouchEventDown(m.getX(), m.getY());
+				Application.getLogic().handleTouchEventDown(m.getX(), m.getY());
 			}
 			mDetector.onTouchEvent(v, m);
 			return v.onTouchEvent(m);
@@ -2017,22 +2245,9 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			de.blau.android.photos.MapOverlay photos = map.getPhotosOverlay();
 			clickedPhotos = (photos != null) ? photos.getClickedPhotos(x, y, map.getViewBox()) : null;
 			
-			Mode mode = getLogic().getMode();
-			boolean isInEditZoomRange = getLogic().isInEditZoomRange();
-			
-			if (showGPS && !followGPS && map.getLocation() != null) {
-				// check if this was a click on the GPS mark use the same calculations we use all over the place ... really belongs in a separate method 
-				final float tolerance = Profile.getCurrent().nodeToleranceValue;				
-				float differenceX = Math.abs(GeoMath.lonE7ToX(map.getWidth(), map.getViewBox(), (int)(map.getLocation().getLongitude() * 1E7)) - x);
-				float differenceY = Math.abs(GeoMath.latE7ToY(map.getHeight(), map.getWidth(), map.getViewBox(), (int)(map.getLocation().getLatitude() * 1E7)) - y);
-				if ((differenceX <= tolerance) && (differenceY <= tolerance)) {
-					if (Math.hypot(differenceX, differenceY) <= tolerance) {
-						setFollowGPS(true);
-						map.invalidate();
-						return;
-					}
-				}
-			}
+			final Logic logic = Application.getLogic();
+			Mode mode = logic.getMode();
+			boolean isInEditZoomRange = logic.isInEditZoomRange();
 			
 			if (isInEditZoomRange) {
 				switch (mode) {
@@ -2104,21 +2319,22 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 
 		@Override
 		public void onUp(View v, float x, float y) {
-			if (getLogic().getMode() == Mode.MODE_EASYEDIT) {
+			if (Application.getLogic().getMode() == Mode.MODE_EASYEDIT) {
 				easyEditManager.invalidate();
 			}
 		}
 		
 		@Override
 		public boolean onLongClick(final View v, final float x, final float y) {
-			if (getLogic().getMode() != Mode.MODE_EASYEDIT) {
-				if (getLogic().getMode() == Mode.MODE_MOVE) {
+			final Logic logic = Application.getLogic();
+			if (logic.getMode() != Mode.MODE_EASYEDIT) {
+				if (logic.getMode() == Mode.MODE_MOVE) {
 					// display context menu
 					de.blau.android.tasks.MapOverlay osbo = map.getOpenStreetBugsOverlay();
 					clickedBugs = (osbo != null) ? osbo.getClickedTasks(x, y, map.getViewBox()) : null;
 					de.blau.android.photos.MapOverlay photos = map.getPhotosOverlay();
 					clickedPhotos = (photos != null) ? photos.getClickedPhotos(x, y, map.getViewBox()) : null;
-					clickedNodesAndWays = getLogic().getClickedNodesAndWays(x, y);
+					clickedNodesAndWays = logic.getClickedNodesAndWays(x, y);
 					int bugCount = clickedBugs != null ? clickedBugs.size() : 0;
 					int photoCount = clickedPhotos != null ? clickedPhotos.size() : 0;
 					int elementCount = clickedNodesAndWays != null ? clickedNodesAndWays.size() : 0;
@@ -2129,7 +2345,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 						} else if (bugCount==1) {
 							performBugEdit(clickedBugs.get(0));
 						} else if (elementCount==1) {
-							showElementInfo(clickedNodesAndWays.get(0));
+							ElementInfo.showDialog(Main.this,clickedNodesAndWays.get(0));
 						}
 					} else if (itemCount > 0) {
 						v.showContextMenu();
@@ -2139,7 +2355,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				return false; // ignore long clicks
 			}
 			
-			if (getLogic().isInEditZoomRange()) {
+			if (logic.isInEditZoomRange()) {
 				setFollowGPS(false); // editing with the screen moving under you is a pain
 				return easyEditManager.handleLongClick(v, x, y);
 			} else {
@@ -2152,13 +2368,13 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		@Override
 		public void onDrag(View v, float x, float y, float dx, float dy) {
 			// Log.d("MapTouchListener", "onDrag dx " + dx + " dy " + dy );
-			getLogic().handleTouchEventMove(x, y, -dx, dy);
+			Application.getLogic().handleTouchEventMove(x, y, -dx, dy);
 			setFollowGPS(false);
 		}
 		
 		@Override
 		public void onScale(View v, float scaleFactor, float prevSpan, float curSpan) {
-			getLogic().zoom((curSpan - prevSpan) / prevSpan);
+			Application.getLogic().zoom((curSpan - prevSpan) / prevSpan);
 			updateZoomControls();
 		}
 		
@@ -2171,7 +2387,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		 */
 		public void performEdit(Mode mode, final View v, final float x, final float y) {
 			if (!easyEditManager.actionModeHandledClick(x, y)) {
-				clickedNodesAndWays = getLogic().getClickedNodesAndWays(x, y);
+				clickedNodesAndWays = Application.getLogic().getClickedNodesAndWays(x, y);
 				switch (((clickedBugs == null) ? 0 : clickedBugs.size()) + clickedNodesAndWays.size() + ((clickedPhotos == null)? 0 : clickedPhotos.size())) {
 				case 0:
 					// no elements were touched
@@ -2190,7 +2406,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 						if (mode==Mode.MODE_EASYEDIT) {
 							easyEditManager.editElement(clickedNodesAndWays.get(0));
 						} else {
-							performTagEdit(clickedNodesAndWays.get(0), null, false, false);
+							performTagEdit(clickedNodesAndWays.get(0), null, false, false, false);
 						}
 					}
 					break;
@@ -2203,38 +2419,27 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 						if (mode==Mode.MODE_EASYEDIT) {
 							easyEditManager.editElement(clickedNodesAndWays.get(0));
 						} else {
-							performTagEdit(clickedNodesAndWays.get(0), null, false, false);
+							performTagEdit(clickedNodesAndWays.get(0), null, false, false, false);
 						}
 					}
 					break;
 				}
 			}
 		}
-
-		/**
-		 * Edit an OpenStreetBug.
-		 * @param bug The bug to edit.
-		 */
-		private void performBugEdit(final Task bug) {
-			Log.d(DEBUG_TAG, "editing bug:"+bug);
-			getLogic().setSelectedBug(bug);
-			FragmentManager fm = getSupportFragmentManager();
-			FragmentTransaction ft = fm.beginTransaction();
-			Fragment prev = fm.findFragmentByTag("fragment_bug");
-			if (prev != null) {
-				ft.remove(prev);
-			}
-			ft.commit();
-
-			TaskFragment bugDialog = TaskFragment.newInstance(bug);
-			bugDialog.show(fm, "fragment_bug");
-		}
 		
 		@Override
 		public void onCreateContextMenu(final ContextMenu menu, final View v, final ContextMenuInfo menuInfo) {
-			onCreateDefaultContextMenu(menu);
+			if (easyEditManager.needsCustomContextMenu()) {
+				easyEditManager.createContextMenu(menu);
+			} else {
+				onCreateDefaultContextMenu(menu);
+			}
 		}
-			
+		
+		/**
+		 * Creates a context menu with the objects near where the screen was touched
+		 * @param menu
+		 */
 		public void onCreateDefaultContextMenu(final ContextMenu menu) {
 			int id = 0;
 			if (clickedPhotos != null) {
@@ -2249,7 +2454,18 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			}
 			if (clickedNodesAndWays != null) {
 				for (OsmElement e : clickedNodesAndWays) {
-					menu.add(Menu.NONE, id++, Menu.NONE, e.getDescription(Application.mainActivity)).setOnMenuItemClickListener(this);
+					String description = e.getDescription(Application.mainActivity);
+					if (e instanceof Node) {
+						List<Way> ways =  Application.getLogic().getWaysForNode((Node)e);
+						if (ways != null && ways.size() > 0) {
+							description = description + " (";
+							for (Way w:ways) {
+								description = description + w.getDescription(Application.mainActivity) + ((ways.indexOf(w)!=(ways.size()-1)?", ":""));
+							}
+							description = description + ")";
+						}
+					} 
+					menu.add(Menu.NONE, id++, Menu.NONE, description).setOnMenuItemClickListener(this);
 				}
 			}
 		}
@@ -2282,16 +2498,17 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				if (candidate.hasParentRelations()) {
 					return true; // otherwise a relation that only has nodes as member is not selectable
 				}
-				float nodeX = getLogic().getNodeScreenX(candidate);
-				float nodeY = getLogic().getNodeScreenY(candidate);
+				final Logic logic = Application.getLogic();
+				float nodeX = logic.getNodeScreenX(candidate);
+				float nodeY = logic.getNodeScreenY(candidate);
 				for (int i = 1; i < clickedNodesAndWays.size(); i++) {
 					if (!(clickedNodesAndWays.get(i) instanceof Node)) break;
 					Node possibleNeighbor = (Node)clickedNodesAndWays.get(i);
-					float node2X = getLogic().getNodeScreenX(possibleNeighbor);
-					float node2Y = getLogic().getNodeScreenY(possibleNeighbor);
+					float node2X = logic.getNodeScreenX(possibleNeighbor);
+					float node2Y = logic.getNodeScreenY(possibleNeighbor);
 					// Fast "square" checking is good enough
-					if (Math.abs(nodeX-node2X) < Profile.NODE_OVERLAP_TOLERANCE_VALUE ||
-						Math.abs(nodeY-node2Y) < Profile.NODE_OVERLAP_TOLERANCE_VALUE ) {
+					if (Math.abs(nodeX-node2X) < DataStyle.NODE_OVERLAP_TOLERANCE_VALUE ||
+						Math.abs(nodeY-node2Y) < DataStyle.NODE_OVERLAP_TOLERANCE_VALUE ) {
 							// The first node has an EXTREMELY close neighbour. Show context menu
 							return true;
 					}
@@ -2317,12 +2534,12 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 				
 				if ((itemId >= 0) && (clickedNodesAndWays != null) && (itemId < clickedNodesAndWays.size())) {
 					final OsmElement element = clickedNodesAndWays.get(itemId);
-					switch (getLogic().getMode()) {
+					switch (Application.getLogic().getMode()) {
 					case MODE_MOVE:
-						showElementInfo(element);
+						ElementInfo.showDialog(Main.this,element);
 						break;
 					case MODE_TAG_EDIT:
-						performTagEdit(element, null, false, false);
+						performTagEdit(element, null, false, false, false);
 						break;
 					case MODE_EASYEDIT:
 						if (doubleTap) {
@@ -2344,7 +2561,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		 * Show toasts displaying the info on nearby objects
 		 */
 		void displayInfo(final float x, final float y) {
-			clickedNodesAndWays = getLogic().getClickedNodesAndWays(x, y);
+			clickedNodesAndWays = Application.getLogic().getClickedNodesAndWays(x, y);
 			// clickedPhotos and
 			if (clickedPhotos != null) {
 				for (Photo p : clickedPhotos) {
@@ -2370,23 +2587,23 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 
 		@Override
 		public boolean onDoubleTap(View v, float x, float y) {
-
-			clickedNodesAndWays = getLogic().getClickedNodesAndWays(x, y);
+			final Logic logic = Application.getLogic();
+			clickedNodesAndWays = logic.getClickedNodesAndWays(x, y);
 			switch (clickedNodesAndWays.size()) {
 			case 0:
 				// no elements were touched
-				if (getLogic().getMode() == Mode.MODE_EASYEDIT) {
+				if (logic.getMode() == Mode.MODE_EASYEDIT) {
 					easyEditManager.nothingTouched(true); // short cut to finishing multi-select
 				}
 				break;
 			case 1:
-				if (getLogic().getMode() == Mode.MODE_EASYEDIT) {
+				if (logic.getMode() == Mode.MODE_EASYEDIT) {
 					easyEditManager.startExtendedSelection(clickedNodesAndWays.get(0));
 				}
 				break;
 			default:
 				// multiple possible elements touched - show menu
-				if (getLogic().getMode() == Mode.MODE_EASYEDIT) {
+				if (logic.getMode() == Mode.MODE_EASYEDIT) {
 					if (menuRequired()) {
 						Log.d(DEBUG_TAG,"onDoubleTap displaying menu");
 						doubleTap  = true; // ugly flag
@@ -2413,6 +2630,8 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		@SuppressLint("NewApi")
 		@Override
 		public boolean onKey(final View v, final int keyCode, final KeyEvent event) {
+			scheduleAutoLock();
+			final Logic logic = Application.getLogic();
 			switch (event.getAction()) {
 			case KeyEvent.ACTION_UP:
 				if (!v.onKeyUp(keyCode, event)) {
@@ -2444,22 +2663,22 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 						return true;
 					case KeyEvent.KEYCODE_VOLUME_UP:
 					case KeyEvent.KEYCODE_SEARCH:
-						getLogic().zoom(Logic.ZOOM_IN);
+						logic.zoom(Logic.ZOOM_IN);
 						updateZoomControls();
 						return true;
 					case KeyEvent.KEYCODE_VOLUME_DOWN:
-						getLogic().zoom(Logic.ZOOM_OUT);
+						logic.zoom(Logic.ZOOM_OUT);
 						updateZoomControls();
 						return true;
 					default:
 						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
 							Character c = Character.toLowerCase((char) event.getUnicodeChar());
 							if (c == Util.getShortCut(getApplicationContext() , R.string.shortcut_zoom_in)) {
-								getLogic().zoom(Logic.ZOOM_IN);
+								logic.zoom(Logic.ZOOM_IN);
 								updateZoomControls();
 								return true;
 							} else if (c == Util.getShortCut(getApplicationContext(), R.string.shortcut_zoom_out)) {
-								getLogic().zoom(Logic.ZOOM_OUT);
+								logic.zoom(Logic.ZOOM_OUT);
 								updateZoomControls();
 								return true;
 							}
@@ -2476,10 +2695,10 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			}
 			return false;
 		}
-		
+
 		private void translate(final CursorPaddirection direction) {
 			setFollowGPS(false);
-			getLogic().translate(direction);
+			Application.getLogic().translate(direction);
 		}
 	}
 	
@@ -2494,14 +2713,15 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 		@SuppressLint("NewApi")
 		@Override
 		public boolean onGenericMotion(View arg0,MotionEvent event) {
+			final Logic logic = Application.getLogic();
 			if (0 != (event.getSource() & InputDevice.SOURCE_CLASS_POINTER)) {
 				switch (event.getAction()) {
 				case MotionEvent.ACTION_SCROLL:
 					if (event.getAxisValue(MotionEvent.AXIS_VSCROLL) < 0.0f) {
-						getLogic().zoom(Logic.ZOOM_IN);
+						logic.zoom(Logic.ZOOM_IN);
 						
 					} else {
-						getLogic().zoom(Logic.ZOOM_OUT);
+						logic.zoom(Logic.ZOOM_OUT);
 					}
 					updateZoomControls();
 					return true;
@@ -2516,7 +2736,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 * @return a list of all pending changes to upload (contains newlines)
 	 */
 	public String getPendingChanges() {
-		List<String> changes = getLogic().getPendingChanges(this);
+		List<String> changes = Application.getLogic().getPendingChanges(this);
 		StringBuilder retval = new StringBuilder();
 		for (String change : changes) {
 			retval.append(change).append('\n');
@@ -2536,9 +2756,10 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	}
 	
 	public static boolean hasChanges() {
+		final Logic logic = Application.getLogic();
 		//noinspection SimplifiableIfStatement
-		if (getLogic() == null) return false;
-		return getLogic().hasChanges();
+		if (logic == null) return false;
+		return logic.hasChanges();
 	}
 	
 	/**
@@ -2599,7 +2820,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 */
 	public void invalidateOptionsMenu() { 
 		// Log.d(DEBUG_TAG, "invalidateOptionsMenu called");
-		super.invalidateOptionsMenu();
+		super.supportInvalidateOptionsMenu();
 	}
 	
 	/**
@@ -2609,7 +2830,7 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	 */
 	public void triggerMenuInvalidation() {
 		Log.d(DEBUG_TAG, "triggerMenuInvalidation called");
-		super.invalidateOptionsMenu(); // TODO delay or make conditional to work around android bug?
+		super.supportInvalidateOptionsMenu(); // TODO delay or make conditional to work around android bug?
 	}
 	
 	/**
@@ -2643,42 +2864,19 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	public void setTracker(TrackerService tracker) {
 		this.tracker = tracker;
 	}
-
-	/**
-	 * Display some information about the element, for now simply as Dialog
-	 * @param element OpenStreetMap element.
-	 */
-	public void showElementInfo(OsmElement element) {
-		FragmentManager fm = getSupportFragmentManager();
-		FragmentTransaction ft = fm.beginTransaction();
-	    Fragment prev = fm.findFragmentByTag("fragment_element_info");
-	    if (prev != null) {
-	        ft.remove(prev);
-	    }
-	    ft.commit();
-
-        ElementInfoFragment elementInfoDialog = ElementInfoFragment.newInstance(element);
-        elementInfoDialog.show(fm, "fragment_element_info");
-	}
 	
 	public void zoomToAndEdit(int lonE7, int latE7, OsmElement e) {
 		Log.d(DEBUG_TAG,"zoomToAndEdit Zoom " + map.getZoomLevel());
-		if (getLogic().getMode()==Mode.MODE_MOVE) { // avoid switiching to the wronf mode
-			ToggleButton lock = setLock(Mode.MODE_MOVE); // NOP to get button
+		final Logic logic = Application.getLogic();
+		if (logic.getMode()==Mode.MODE_MOVE) { // avoid switching to the wrong mode
+			FloatingActionButton lock = setLock(Mode.MODE_MOVE); // NOP to get button
 			if (EASY_TAG.equals(lock.getTag())) {
 				setLock(Mode.MODE_EASYEDIT);
 			} else {
 				setLock(Mode.MODE_TAG_EDIT);
 			}
 		}
-		setFollowGPS(false); // otherwise the screen could move around
-		if (e instanceof Node && map.getZoomLevel() < 22) {
-			Log.d(DEBUG_TAG,"zoomToAndEdit setting Zoom to 22");
-			getLogic().setZoom(22); // FIXME this doesn't seem to work as expected
-		} else {
-			map.getViewBox().setBorders(e.getBounds());
-		}
-		map.getViewBox().moveTo(lonE7, latE7);
+		zoomTo(lonE7, latE7, e);
 		logic.setSelectedNode(null);
 		logic.setSelectedWay(null);
 		logic.setSelectedRelation(null);
@@ -2693,29 +2891,56 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 			case RELATION:
 				logic.setSelectedRelation((Relation) e);
 				break;
+			case AREA:
+				if (Way.NAME.equals(e.getName())) {
+					logic.setSelectedWay((Way) e);
+				} else {
+					logic.setSelectedRelation((Relation) e);
+				}
+				break;
 		}
-		if (getLogic().getMode()==Mode.MODE_EASYEDIT) {
+		if (logic.getMode()==Mode.MODE_EASYEDIT) {
 			easyEditManager.editElement(e);
 			map.invalidate();
 		} else { // tag edit mode
-			performTagEdit(e, null, false, false);
+			performTagEdit(e, null, false, false, false);
 		}
 	}
-
+	
 	/**
-	 * @return the logic
+	 * Zoom to the coordinates and try and set the viewbox size to something reasonable
+	 * @param lonE7
+	 * @param latE7
+	 * @param e
 	 */
-	public static Logic getLogic() {
-		return logic;
+	public void zoomTo(int lonE7, int latE7, OsmElement e) {
+		setFollowGPS(false); // otherwise the screen could move around
+		if (e instanceof Node && map.getZoomLevel() < 22) {
+			Application.getLogic().setZoom(22); // FIXME this doesn't seem to work as expected
+		} else {
+			map.getViewBox().setBorders(e.getBounds(),false);
+		}
+		map.getViewBox().moveTo(lonE7, latE7);
+	}
+	
+	public void zoomTo( OsmElement e) {
+		setFollowGPS(false); // otherwise the screen could move around
+		if (e instanceof Node && map.getZoomLevel() < 22) {
+			Application.getLogic().setZoom(22); // FIXME this doesn't seem to work as expected
+			map.getViewBox().moveTo(((Node)e).getLon(), ((Node)e).getLat());
+		} else {
+			map.getViewBox().setBorders(e.getBounds(),false);
+		}
+		
 	}
 	
 	@Override
 	/**
 	 * Workaround for bug mentioned below
 	 */
-	public ActionMode startActionMode(final ActionMode.Callback callback) {
+	public ActionMode startSupportActionMode(final ActionMode.Callback callback) {
 	  // Fix for bug https://code.google.com/p/android/issues/detail?id=159527
-	  final ActionMode mode = super.startActionMode(callback);
+	  final ActionMode mode = super.startSupportActionMode(callback);
 	  if (mode != null) {
 	    mode.invalidate();
 	  }
@@ -2725,5 +2950,102 @@ public class Main extends SherlockFragmentActivity implements ServiceConnection,
 	@Override
 	public void update() {
 		map.invalidate();
-	}	
+	}
+	
+	/**
+	 * @return the bottomToolbar
+	 */
+	public android.support.v7.widget.ActionMenuView getBottomBar() {
+		return bottomBar;
+	}
+
+	/**
+	 * @param bottomBar the bottomToolbar to set
+	 */
+	public void setBottomBar(android.support.v7.widget.ActionMenuView bottomBar) {
+		MenuUtil.setupBottomBar(this, bottomBar, isFullScreen(), prefs.lightThemeEnabled());
+		this.bottomBar = bottomBar;
+	}
+	
+	/**
+	 * @return the view containing the zoom + and - buttons
+	 */
+	public ZoomControls getControls() {
+		return zoomControls;
+	}
+	
+	/**
+	 * @return the "center on GPS position button"
+	 */
+	public FloatingActionButton getFollowButton() {
+		return follow;
+	}
+	
+	/**
+	 * Display the "center on GPS position" button
+	 */
+	public void hideFollowButton() {
+		FloatingActionButton follow = getFollowButton();
+		if (follow != null) {
+			follow.hide();
+		}
+	}
+	
+	/**
+	 * Display the "center on GPS position" button, checks if GPS is actually on
+	 */
+	public void showFollowButton() {
+		FloatingActionButton follow = getFollowButton();
+		if (follow != null && ensureGPSProviderEnabled()) {
+			follow.show();
+		}
+	}
+	
+	/**
+	 * Lock screen if we are in a mode in which that can reasonably be done
+	 */
+	private Runnable autoLock = new Runnable() {
+		@Override
+		public void run() {
+			if (Application.getLogic().getMode()!=Mode.MODE_MOVE) {
+				if (!easyEditManager.isProcessingAction() || easyEditManager.inElementSelectedMode()) {
+					View lock = getLock();
+					if (lock != null) {
+						lock.performClick();
+					}
+					if (easyEditManager.inElementSelectedMode()) {
+						Application.getLogic().deselectAll();
+						easyEditManager.finish();
+					}
+				} else { // can't lock now, reschedule
+					if (prefs != null) {
+						int delay = prefs.getAutolockDelay();
+						if (delay > 0) {
+							map.postDelayed(autoLock, delay);
+						}
+					}
+				}
+			}
+		}
+	};
+	
+	/**
+	 * Schedule automatic locking of the screen in a configurable time in the future
+	 */
+	void scheduleAutoLock() {
+		map.removeCallbacks(autoLock);
+		if (prefs != null) {
+			int delay = prefs.getAutolockDelay();
+			if (delay > 0) {
+				map.postDelayed(autoLock, delay);
+			}
+		}
+	}
+	
+	/**
+	 * Remove any pending automatic lock tasks 
+	 */
+	void descheduleAutoLock() {
+		map.removeCallbacks(autoLock);
+	}
 }

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
+
     <!-- Dialogs -->
     <string name="transfer_download_current_dialog_title">Caution!</string>
     <string name="transfer_download_current_dialog_message">You have made some changes. Do you want to upload them instead of discard?</string>
@@ -10,8 +11,8 @@
     <string name="upload_problem_message">Some or all data was not uploaded. Try uploading again later if this was only a temporary problem.</string>
     <string name="upload_conflict_title">Upload conflict</string>
     <string name="upload_conflict_message_version">%1$s \nhas local version %2$s \nand on the server %3$s </string>
-	<string name="upload_conflict_message_deleted">%1$s \nhas local version %2$s \nand was deleted on the server</string>
-	<string name="upload_conflict_message_referential">%1$s \nwas deleted locally \nbut has references on the server </string>
+    <string name="upload_conflict_message_deleted">%1$s \nhas local version %2$s \nand was deleted on the server</string>
+    <string name="upload_conflict_message_referential">%1$s \nwas deleted locally \nbut has references on the server </string>
     <string name="use_local_version">Use \nlocal \nversion</string>
     <string name="use_server_version">Use \nversion \non server</string>
     <string name="no_login_data_title">Authentication failed</string>
@@ -23,6 +24,8 @@
     <string name="wrong_login_data_re_authenticate">Re-Authenticate</string>
     <string name="data_conflict_title">Version Conflict</string>
     <string name="data_conflict_message">The data you are trying to download contains data that conflicts with your edits. Please try to upload your data first before retrying.</string>
+    <string name="invalid_bounding_box_title">Invalid Bounding Box</string>
+    <string name="invalid_bounding_box_message">The area selected fails to conform to the API restrictions, please choose a different one.</string>
     <string name="api_offline_title">API Offline</string>
     <string name="api_offline_message">The API is currently offline and does not allow data to be retrieved or written.</string>
     <string name="out_of_memory_title">Out of Memory</string>
@@ -45,6 +48,8 @@
     <string name="progress_deleting_message">Deleting…</string>
     <string name="progress_searching_message">Searching…</string>
     <string name="progress_saving_message">Saving…</string>
+    <string name="progress_uploading_message">Uploading…</string>
+    <string name="progress_preset_message">Downloading preset…</string>
     <string name="progress_oauth">Loading your account on openstreetmap.org for OAuth authorisation…</string>
     <string name="upload_comment_label">Comment:</string>
     <string name="upload_source_label">Source:</string>
@@ -87,6 +92,7 @@
     <string name="save_file">Enter file to save to</string>
     <string name="existing_track_title">Existing track data</string>
     <string name="existing_track_message">You already have existing track data. You may want to cancel and save first.</string>
+    <string name="delete_tags">Really delete all tags for object \"%1$s\"?</string>
     <string name="element_information">Element information</string>
     <string name="id">Id</string>
     <string name="nodes">Nodes</string>
@@ -102,9 +108,9 @@
     <string name="last_updated">last updated</string>
     <string name="error">error</string>
     <string name="warning">warning</string>
-	<string name="minor_issue">minor issue</string>
-	<string name="unknown_error_level">unknown error level</string>
-        
+    <string name="minor_issue">minor issue</string>
+    <string name="unknown_error_level">unknown error level</string>
+
     <!-- Toaster -->
     <string name="toast_no_changes">You have not changed anything yet…</string>
     <string name="toast_unsaved_changes">You have unsaved changes, please upload them first.</string>
@@ -117,7 +123,8 @@
     <string name="toast_not_in_bug_range">Please zoom in to add a bug (Volume Up/Down or Lens/Shift)</string>
     <string name="toast_export_failed">Export failed</string>
     <string name="toast_export_success">Exported to %1$s</string>
-    <string name="toast_preset_overwrote_tags">Notice - preset overwrote tag(s)</string>
+    <string name="toast_preset_overwrote_tags">Note - preset overwrote tag(s)</string>
+    <string name="toast_merge_overwrote_tags">Note - operation overwrote tag(s)</string>
     <string name="toast_oneway_reversed">You reversed a oneway street or a way with direction dependent tags. Please check the tags and correct if necessary.</string>
     <string name="toast_merge_tag_conflict">You merged elements that have conflicting tag values, direction dependent semantics or different roles in the same relation. Please check the tags and roles and correct if necessary.</string>
     <string name="toast_potential_merge_tag_conflict">You are trying to merge elements that have conflicting tag values. Please check the tags and correct first before retrying.</string>
@@ -152,6 +159,12 @@
     <string name="toast_min_one_preset">At least one preset has to be selected!</string>
     <string name="toast_used_backup">Corrupted state file, used backup file!</string>
     <string name="toast_used_bug_backup">Corrupted bug state file, used backup file!</string>
+    <string name="toast_rmpty_relation">Empty relation, creating crash report.</string>
+    <string name="toast_split_from">Splitted "from" way</string>
+    <string name="toast_split_via">Splitted "via" way</string>
+    <string name="toast_split_from_and_via">Splitted "from" and "via" ways</string>
+    <string name="toast_split_to">Splitted "to" way</string>
+    
     <!-- Some generic labels/buttons -->
     <string name="yes">Yes</string>
     <string name="no">No</string>
@@ -164,9 +177,10 @@
     <string name="replace">Replace</string>
     <string name="save">Save</string>
     <string name="back">Back</string>
-    <string name="foward">Forward</string>
+    <string name="forward">Forward</string>
     <string name="keep">Keep</string>
     <string name="enable">Enable</string>
+    <string name="clear">Clear</string>
     <!-- Dialog for back button -->
     <string name="exit_title">Really exit?</string>
     <string name="exit_text">Are you sure you want to exit?</string>
@@ -187,12 +201,31 @@
     <string name="tag_menu_resetMRU">Reset Presets</string>
     <string name="tag_menu_reset_address_prediction">Reset address prediction</string>
     <string name="tag_menu_exit_no_save">Exit\nwithout saving</string>
-    <string name="tag_value_hint">Tap for values</string>
+    <string name="tag_menu_delete_unassociated_tags">Delete non-associated tags</string>
+    <string name="tag_menu_top">Scroll to top</string>
+    <string name="tag_menu_bottom">Scroll to bottom</string>
+    <string name="tag_value_hint">Type value</string>
+    <string name="tag_autocomplete_value_hint">Type or tap for values</string>
+    <string name="tag_autocomplete_name_hint">Type or tap for name suggestions</string>
     <string name="tag_multi_value_hint">Multiple values</string>
-    <string name="tag_action_title">Tags selected</string>
+    <string name="tag_dialog_value_hint">Tap for values</string>
+    <string name="tag_action_tag_title">Tag(s) selected</string>
+    <string name="tag_action_members_title">Member(s) selected</string>
+    <string name="tag_action_parents_title">Relation(s) selected</string>
+    <string name="tag_additional_properties">Additional properties</string>
+    <string name="tag_details">Details</string>
+    <string name="tag_not_set">Not set</string>
+    <string name="tag_menu_move_up">Move up</string>
+    <string name="tag_menu_move_top">Move to top</string>
+    <string name="tag_menu_move_down">Move down</string>
+    <string name="tag_menu_move_bottom">Move to bottom</string>
+    <string name="tag_menu_sort">Sort</string>
+    <string name="tag_menu_download">Download</string>
     <string name="menu_up">Up</string>
     <string name="menu_top">Top</string>
     <string name="menu_preset_help">Preset help</string>
+    <string name="internationalized_hint">%1$s (%2$s)</string>
+    <string name="tag_menu_i8n">Add tags for %1$s</string>
     <!-- Strings in LocationPicker -->
     <string name="location_headline">Load Area</string>
     <string name="location_choose_radius">Choose radius:</string>
@@ -227,9 +260,12 @@
     <string name="menu_closed_way_split_1">Split closed way, 1st node</string>
     <string name="menu_closed_way_split_2">Split closed way, 2nd node</string>
     <string name="menu_append">Append</string>
-    <string name="menu_restriction">Add restriction</string>
-    <string name="menu_restriction_via">Add restriction via</string>
-    <string name="menu_restriction_to">Add restriction to</string>
+    <string name="menu_restriction">Add turn restriction</string>
+    <string name="menu_restriction_restart_from">Re-select \"from\" segment</string>
+    <string name="menu_restriction_via">Add \"via\" segment/element</string>
+    <string name="menu_restriction_restart_via">Re-select \"via\" segment</string>
+    <string name="menu_restriction_to">Add \"to\" segment</string>
+    <string name="menu_restriction_restart_to">Re-select \"to\" segment</string>
     <string name="menu_relation">Create relation</string>
     <string name="menu_add_relation_member">Add member</string>
     <string name="menu_select_relation_members">Select members</string>
@@ -282,6 +318,8 @@
     <string name="menu_extend_selection">Extend selection</string>
     <string name="menu_information">Info</string>
     <string name="menu_voice_commands">Voice commands</string>
+    <string name="menu_set_name">Set name</string>
+    <string name="tag_form_unknown_element">Unknown element (no preset found)</string>
     <string name="menu_tools">Tools</string>
     <string name="menu_tools_flush_background_tile_cache">Flush background tile cache</string>
     <string name="menu_tools_flush_overlay_tile_cache">Flush overlay tile cache</string>
@@ -296,16 +334,16 @@
     <string name="menu_tools_background_align_apply2all">Apply (all Zooms)</string>
     <string name="menu_tools_background_contrast">Contrast</string>
     <string name="menu_tools_oauth_reset">Reset OAuth</string>
-	<string name="menu_tools_oauth_authorisation">Authorise OAuth</string>
-    
+    <string name="menu_tools_oauth_authorisation">Authorise OAuth</string>
+
     <!-- element action mode menu -->
     <string name="menu_tags">Properties</string>
     <!-- Text should be as short as possible -->
     <string name="menu_history">History</string>
     <string name="menu_merge">Join</string>
     <string name="menu_reverse">Reverse</string>
-	<string name="notreversable_description">The way is tagged with attributes that are direction dependent and cannot be reversed. Reversing the way will break the tagging.</string>
-	<string name="reverse_anyway">Reverse anyway</string>
+    <string name="notreversable_description">The way is tagged with attributes that are direction dependent and cannot be reversed. Reversing the way will break the tagging.</string>
+    <string name="reverse_anyway">Reverse anyway</string>
     <string name="deleteway_description">You are about to delete a way.\n\nYou can either keep all nodes, or delete nodes that only belong to this way and do not have any tags.</string>
     <string name="deleteway_relation_description">You are about to delete a way that is a member of one or more relations. Removing the way from the relation(s) may render it/them invalid.</string>
     <string name="deleteway_nodesnotdownloaded_description">The way contains nodes outside of the downloaded area and cannot be deleted without creating an inconsistent state. Download the whole way first before retrying.</string>
@@ -313,6 +351,7 @@
     <string name="deleteway_wayandnodes">Delete way and nodes</string>
     <string name="deletenode_relation_description">You are about to delete a node that is a member of one or more relations. Removing the node from the relation(s) may render it/them invalid.</string>
     <string name="deletenode">Delete node</string>
+    <string name="split_all_ways">Split all ways</string>
     <!-- EasyEdit action mode titles -->
     <string name="actionmode_wayselect">Way selected</string>
     <string name="actionmode_nodeselect">Node selected</string>
@@ -320,6 +359,7 @@
     <string name="actionmode_createpath">Creating path</string>
     <string name="actionmode_multiselect">Multiselect</string>
     <!-- Preferences -->
+    <string name="config_category_editing">Data and Editing Settings</string>
     <string name="config_category_view">User Interface Settings</string>
     <string name="config_showCameraAction_title">Show camera action</string>
     <string name="config_showCameraAction_summary">Show camera icon on action bar</string>
@@ -385,53 +425,67 @@
     <string name="config_licensebutton_summary">Show authors and license information</string>
     <string name="config_debugbutton_title">Debug</string>
     <string name="config_debugbutton_summary">Show some internal information</string>
-	<string name="config_mapProfile_title">Map profile</string>
-	<string name="config_mapProfile_summary">Set style and visibility of elements</string>
-	<string name="config_use_back_for_undo_title">Use back key for Undo</string>
-	<string name="config_use_back_for_undo_summary">Use the back key for undo in the main edit view</string>
-	<string name="config_largeDragArea_title">Large node drag area</string>
-	<string name="config_largeDragArea_summary">Provide large area for dragging nodes</string>
-	<string name="config_extTriggeredDownloadRadius_title">Download radius</string>
-	<string name="config_extTriggeredDownloadRadius_summary">Radius (m) of externally triggered downloads, 0 = center on map only.</string>
-	<string name="config_maxDownloadSpeed_title">Maximum auto-download speed</string>
-	<string name="config_maxDownloadSpeed_summary">Limit (in km/h) above which auto-download is suspended</string>
-	<string name="config_bugDownloadRadius_title">Notes/Bugs download radius</string>
-	<string name="config_bugDownloadRadius_summary">Radius (m) of notes/bugs downloads</string>
-	<string name="config_maxBugDownloadSpeed_title">Maximum notes/bug auto-download speed</string>
-	<string name="config_maxBugDownloadSpeed_summary">Limit (in km/h) above which notes/bugs auto-download is suspended</string>
-	<string name="config_bugFilter_title">Filter for Notes/Bugs</string>
-	<string name="config_bugFilter_summary">Select which elements are displayed on the notes/bug layer</string>
-	<string name="config_enableNameSuggestions_title">Enable name suggestions</string>
-	<string name="config_enableNameSuggestions_summary">Turn on suggestions for the name tag</string>
-	<string name="config_enableAutoPreset_title">Enable auto preset</string>
-	<string name="config_enableAutoPreset_summary">Automatically add preset when name suggestion is selected</string>
-	<string name="config_splitActionBarEnabled_title">Enable split action bar</string>
-	<string name="config_splitActionBarEnabled_summary">Allow split action bar, use is device specific. Requires restart and an Android version >= 4.0</string>
-	<string name="config_gps_source_title">GPS source</string>
-	<string name="config_gps_source_summary">Source of GPS location updates</string>
-	<string name="config_gps_source_tcp_title">NMEA network source</string>
-	<string name="config_gps_source_tcp_summary">Address of TCP NMEA source as host:port</string>
-	<string name="config_leaveGpsDisabled_title">Leave GPS disabled</string>
-	<string name="config_leaveGpsDisabled_summary">Don\'t ask user to turn GPS on if it is disabled</string>
-	<string name="config_enableLightTheme_title">Enable light theme</string>
-	<string name="config_enableLightTheme_summary">Light theme with white backgrounds</string>
-	<string name="config_category_misc">Miscellaneous</string>
-	<string name="config_address_tags">Address tags</string>
-	<string name="config_address_tags_summary">Tags used for address prediction</string>
-	<string name="config_moreprefs">More settings...</string>
+    <string name="config_mapProfile_title">Map profile</string>
+    <string name="config_mapProfile_summary">Set style and visibility of elements</string>
+    <string name="config_use_back_for_undo_title">Use back key for Undo</string>
+    <string name="config_use_back_for_undo_summary">Use the back key for undo in the main edit view</string>
+    <string name="config_largeDragArea_title">Large node drag area</string>
+    <string name="config_largeDragArea_summary">Provide large area for dragging nodes</string>
+    <string name="config_extTriggeredDownloadRadius_title">Download radius</string>
+    <string name="config_extTriggeredDownloadRadius_summary">Radius (m) of externally triggered downloads, 0 = center on map only.</string>
+    <string name="config_maxDownloadSpeed_title">Maximum auto-download speed</string>
+    <string name="config_maxDownloadSpeed_summary">Limit (in km/h) above which auto-download is suspended</string>
+    <string name="config_bugDownloadRadius_title">Notes/Bugs download radius</string>
+    <string name="config_bugDownloadRadius_summary">Radius (m) of notes/bugs downloads</string>
+    <string name="config_maxBugDownloadSpeed_title">Maximum notes/bug auto-download speed</string>
+    <string name="config_maxBugDownloadSpeed_summary">Limit (in km/h) above which notes/bugs auto-download is suspended</string>
+    <string name="config_bugFilter_title">Filter for Notes/Bugs</string>
+    <string name="config_bugFilter_summary">Select which elements are displayed on the notes/bug layer</string>
+    <string name="config_enableNameSuggestions_title">Enable name suggestions</string>
+    <string name="config_enableNameSuggestions_summary">Turn on suggestions for the name tag</string>
+    <string name="config_enableAutoPreset_title">Enable auto preset</string>
+    <string name="config_enableAutoPreset_summary">Automatically add preset when name suggestion is selected</string>
+    <string name="config_splitActionBarEnabled_title">Enable split action bar</string>
+    <string name="config_splitActionBarEnabled_summary">Allow split action bar, use is device specific. Requires restart and an Android version >= 4.0</string>
+    <string name="config_gps_source_title">GPS source</string>
+    <string name="config_gps_source_summary">Source of GPS location updates</string>
+    <string name="config_gps_source_tcp_title">NMEA network source</string>
+    <string name="config_gps_source_tcp_summary">Address of TCP NMEA source as host:port</string>
+    <string name="config_leaveGpsDisabled_title">Leave GPS disabled</string>
+    <string name="config_leaveGpsDisabled_summary">Don\'t ask user to turn GPS on if it is disabled</string>
+    <string name="config_enableLightTheme_title">Enable light theme</string>
+    <string name="config_enableLightTheme_summary">Light theme with white backgrounds</string>
+    <string name="config_category_misc">Miscellaneous</string>
+    <string name="config_address_tags">Address tags</string>
+    <string name="config_address_tags_summary">Tags used for address prediction</string>
+    <string name="config_moreprefs">More settings...</string>
+    <string name="config_tagFormEnabled_title">Display tag form</string>
+    <string name="config_tagFormEnabled_summary">Display tag form for editing</string>
+    <string name="config_followGPSbutton_title">Follow GPS button layout</string>
+    <string name="config_followGPSbutton_summary">Where the "follow GPS" button will be positioned</string>
+    <string name="config_fullscreenMode_title">Full screen mode</string>
+    <string name="config_fullscreenMode_summary">Behaviour on devices with "soft" keys.</string>
+    <string name="config_maxInlineValues_title">Max. number of inline values</string>
+    <string name="config_maxInlineValues_summary">Maximum number of inline values displayed in tag form</string>
+    <string name="config_maxTileDownloadThreads_title">Max. number of download threads</string>
+    <string name="config_maxTileDownloadThreads_summary">Maximum number of threads for downloading tiles</string>
+    <string name="config_notificationCacheSize_title">Max. number of displayed notifications</string>
+    <string name="config_notificationCacheSize_summary">Maximum number of displayed notifications per type</string>
+    <string name="config_autoLockDelay_title">Time to wait before auto-locking</string>
+    <string name="config_autoLockDelay_summary">Time to wait in seconds before auto-locking, 0 disables.</string>
     <!-- preset downloader messages -->
     <string name="preset_update">Update preset</string>
     <string name="preset_download_successful">Preset successfully downloaded</string>
     <string name="preset_download_failed">The preset file could not be downloaded. The preset will not work.</string>
     <string name="preset_download_parse_failed">The preset file is invalid. The preset will not work.</string>
     <string name="preset_download_missing_images">The preset file was successfully downloaded. However, some icons could not be downloaded and will be missing.</string>
-    <!--  changes -->
+    <!-- changes -->
     <string name="changes_deleted">"%1$s" deleted</string>
     <string name="changes_changed">"%1$s" changed</string>
     <string name="changes_created">"%1$s" created</string>
     <string name="confirm_upload_title">Upload?</string>
     <string name="confirm_upload_text">Upload the following changes?\n%1$s</string>
-    <!--  url handler activity -->
+    <!-- url handler activity -->
     <string name="urldialog_add_preset">Add preset</string>
     <string name="urldialog_preset_exists">This preset already exists</string>
     <string name="urldialog_preset_download_successful">Preset download successful!</string>
@@ -440,7 +494,7 @@
     <string name="urldialog_api_install_successful">API install successful!</string>
     <string name="urldialog_add_api">Add API</string>
     <string name="urldialog_nodata_text">The configuration URL does not contain valid data.</string>
-    <!--  common terms  -->
+    <!-- common terms -->
     <string name="add">Add</string>
     <string name="edit">Edit</string>
     <string name="delete">Delete</string>
@@ -455,7 +509,7 @@
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="undo_nothing">nothing to undo</string>
-    <string name="tracking_active_title">Vexpucci background service active</string>
+    <string name="tracking_active_title">Vespucci background service active</string>
     <string name="tracking_active_text">Vespucci is recording a GPS track or auto-downloading</string>
     <string name="gps_failure">Failed to enable GPS</string>
     <!-- undo actions - give a description of the action, in infinitive, to display in strings like "Undo: actionname" or "Redo: actionname" -->
@@ -484,23 +538,21 @@
     <string name="undo_action_circulize">arrange in circle</string>
     <string name="undo_action_fix_conflict">fix conflict</string>
     <string name="undo_action_extract_node">extract node</string>
-    <!--  ACRA -->
-    <string name="crash_notif_ticker_text">Vespucci has crashed or found a serious issue. Please send an error report.</string>
-    <string name="crash_notif_title">Vespucci has crashed or found a serious issue.</string>
-    <string name="crash_notif_text">Please click here to help fix the issue.</string>
-    <string name="crash_dialog_text">An unexpected issue occurred forcing the application to stop or report an error. Please help us fix this by sending us error data, all you have to do is click \'OK\'. If the error has occurred more than once, please open an issue on github.com.</string>
+    <!-- ACRA -->
+    <string name="crash_dialog_text">Vespucci crashed or found a serious issue the last time it ran.\n\nPlease help us by sending an error report, all you have to do is click \'OK\'.\n</string>
+    <string name="crash_dialog_comment_prompt">Add any further information you believe might help and (optional) your e-mail address if you want feedback.\n\nThank you!</string>
     <string name="config_category_acra">Crash Reporting</string>
     <string name="pref_enable_acra">Report application crashes</string>
     <string name="pref_acra_enabled">Crash reporting enabled</string>
     <string name="pref_acra_disabled">Crash reporting disabled</string>
     <!-- Exceptions messages -->
     <string name="exception_too_many_nodes">This operation would create a way with too many nodes.</string>
-    <!--  Notifications -->
+    <!-- Notifications -->
     <string name="alert_data_issue">OSM data issue detected</string>
     <string name="alert_note">Nearby OSM note detected</string>
     <string name="alert_bug">Nearby OSM bug detected</string>
     <string name="alert_distance_direction">in %1$d m %2$s</string>
-    <!--  Misc relation related stuff -->
+    <!-- Misc relation related stuff -->
     <string name="role">Role</string>
     <string name="role_lc">role</string>
     <string name="membership_relation_heading">Member of relation</string>
@@ -513,35 +565,71 @@
     <string name="deleterelation">Delete relation</string>
     <string name="delete_from_relation_description">You are about to delete this element from a relation.</string>
     <string name="unset_relation_type">unset relation type</string>
-    <!-- time and distance  -->
+    <!-- time and distance -->
     <string name="days">days</string>
     <string name="hours">hours</string>
     <string name="minutes">minutes</string>
     <string name="seconds">seconds</string>
     <string name="km">km</string>
     <string name="meter">meter</string>
-    <!-- Help system  -->
+    <!-- Help system -->
     <string name="toast_nohelp">No help available here!</string>
     <!-- Arrays -->
     <string-array name="gpx_visibility">
-	<item>private</item>
-	<item>public</item>
-	<item>trackable</item>
-	<item>identifiable</item>
-	</string-array>
-	<string-array name="gps_source">
-	<item>Internal</item>
-	<item>Internal NMEA</item>
-	<item>NMEA from TCP client</item>
-	<item>NMEA from TCP server</item>
-	</string-array>
-	<string-array name="bug_state">
-	<item>Open</item>
-	<item>Closed</item>
-	<item>False positive</item>
-	</string-array>
-	<string-array name="note_state">
-	<item>Open</item>
-	<item>Closed</item>
-	</string-array>
+        <item>private</item>
+        <item>public</item>
+        <item>trackable</item>
+        <item>identifiable</item>
+    </string-array>
+    <string-array name="gps_source">
+        <item>Internal</item>
+        <item>Internal NMEA</item>
+        <item>NMEA from TCP client</item>
+        <item>NMEA from TCP server</item>
+    </string-array>
+    <string-array name="bug_state">
+        <item>Open</item>
+        <item>Closed</item>
+        <item>False positive</item>
+    </string-array>
+    <string-array name="note_state">
+        <item>Open</item>
+        <item>Closed</item>
+    </string-array>
+    <string-array name="followGPSbutton_entries">
+        <item>Left</item>
+        <item>Right</item>
+    </string-array>
+    <string name="follow_GPS_left" translatable="false">LEFT</string>
+    <string name="follow_GPS_right" translatable="false">RIGHT</string>
+    <string-array name="followGPSbutton_values" translatable="false">
+        <item>string/follow_GPS_left</item>
+        <item>string/follow_GPS_right</item>
+    </string-array>
+    <string-array name="full_screen_preference_entries">
+        <item>Auto</item>
+		<item>Never</item>
+		<item>Force</item>
+		<item>No statusbar</item>
+    </string-array>
+    <string name="full_screen_auto" translatable="false">AUTO</string>
+    <string name="full_screen_never" translatable="false">NEVER</string>
+    <string name="full_screen_force" translatable="false">FORCE</string>
+    <string name="full_screen_no_statusbar" translatable="false">NOSTATUSBAR</string>
+    <string-array translatable="false" name="full_screen_preference_values">
+		<item>@string/full_screen_auto</item>
+		<item>@string/full_screen_never</item>
+		<item>@string/full_screen_force</item>
+		<item>@string/full_screen_no_statusbar</item>
+    </string-array>
+        <string-array name="full_screen_preference_no_auto_entries">
+		<item>Never</item>
+		<item>Force</item>
+		<item>No statusbar</item>
+    </string-array>
+    <string-array translatable="false" name="full_screen_preference_no_auto_values">
+		<item>@string/full_screen_never</item>
+		<item>@string/full_screen_force</item>
+		<item>@string/full_screen_no_statusbar</item>
+    </string-array>
 </resources>

@@ -1,33 +1,29 @@
 package de.blau.android.propertyeditor;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.os.Bundle;
+import android.support.v4.app.DialogFragment;
+import android.support.v7.app.AlertDialog;
+import android.support.v7.app.AlertDialog.Builder;
+import android.support.v7.app.AppCompatDialog;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.LinearLayout;
-
-import com.actionbarsherlock.app.SherlockDialogFragment;
-import com.actionbarsherlock.app.SherlockFragment;
-
 import de.blau.android.Application;
-import de.blau.android.Main;
 import de.blau.android.R;
 import de.blau.android.osm.OsmElement;
-import de.blau.android.osm.Relation;
-import de.blau.android.osm.OsmElement.ElementType;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetClickHandler;
 import de.blau.android.presets.Preset.PresetGroup;
 import de.blau.android.presets.Preset.PresetItem;
 import de.blau.android.propertyeditor.PresetFragment.OnPresetSelectedListener;
+import de.blau.android.util.ThemeUtils;
 
-public class PresetSearchResultsFragment extends SherlockDialogFragment {
+public class PresetSearchResultsFragment extends DialogFragment {
 
 	private static final String DEBUG_TAG = PresetSearchResultsFragment.class.getSimpleName();
 	
@@ -67,22 +63,27 @@ public class PresetSearchResultsFragment extends SherlockDialogFragment {
         Log.d(DEBUG_TAG, "onCreate");
     }
     
-    
+    @SuppressWarnings("unchecked")
+	@SuppressLint("InflateParams")
     @Override
-    public View onCreateView(LayoutInflater inflater, ViewGroup container,
-    		Bundle savedInstanceState) {
-    	LinearLayout presetsLayout = (LinearLayout) inflater.inflate(R.layout.recentpresets_view,null);
+    public AppCompatDialog onCreateDialog(Bundle savedInstanceState)
+    {
+    	final LayoutInflater inflater = ThemeUtils.getLayoutInflater(getActivity());
+    	Builder builder = new AlertDialog.Builder(getActivity());
+    	builder.setTitle(R.string.search_results_title);
+       	// inflater needs to be got from a themed view or else all our custom stuff will not style correctly
+    	LinearLayout presetsLayout = (LinearLayout) inflater.inflate(R.layout.preset_search_results_view,null);
    
     	presets = (ArrayList<PresetItem>) getArguments().getSerializable("searchResults");
-
-    	
+   	
     	View v = getResultsView(presetsLayout, presets);
+
     	if (v != null) {
-        	presetsLayout.addView(v);
-        	presetsLayout.setVisibility(View.VISIBLE);
+    		builder.setView(v);
     	}
-		return presetsLayout;
+    	return builder.create();
     }
+    
 
 	View getResultsView(final LinearLayout presetLayout, final ArrayList<PresetItem> presets) {
 		View v = null;
@@ -126,12 +127,13 @@ public class PresetSearchResultsFragment extends SherlockDialogFragment {
 			v = results.getGroupView(getActivity(), presetClickHandler, null);
 
 			// v.setBackgroundColor(getResources().getColor(R.color.tagedit_field_bg));
-			v.setPadding(0, Preset.SPACING, 0, 2*Preset.SPACING);
-			v.setId(R.id.recentPresets);
+	    	  
+	    	int padding = ThemeUtils.getDimensionFromAttribute(getActivity(), R.attr.dialogPreferredPadding);		
+			v.setPadding(padding - Preset.SPACING, Preset.SPACING, padding- Preset.SPACING, padding);
 	   	} else {
 			Log.d(DEBUG_TAG,"getResultsView problem");
 		}	
-		getDialog().setTitle(R.string.search_results_title);
+
 	   	return v;
 	}
 

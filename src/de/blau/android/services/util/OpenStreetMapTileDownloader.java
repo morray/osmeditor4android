@@ -16,8 +16,9 @@ import android.content.Context;
 import android.os.RemoteException;
 import android.util.Log;
 import de.blau.android.Application;
+import de.blau.android.prefs.Preferences;
+import de.blau.android.resources.TileLayerServer;
 import de.blau.android.services.IOpenStreetMapTileProviderCallback;
-import de.blau.android.views.util.OpenStreetMapTileServer;
 
 /**
  * The OpenStreetMapTileDownloader loads tiles from a server and passes them to
@@ -51,7 +52,7 @@ public class OpenStreetMapTileDownloader extends OpenStreetMapAsyncTileProvider 
 	public OpenStreetMapTileDownloader(final Context ctx, final OpenStreetMapTileFilesystemProvider aMapTileFSProvider){
 		mCtx = ctx;
 		mMapTileFSProvider = aMapTileFSProvider;
-		mThreadPool = Executors.newFixedThreadPool(4);
+		mThreadPool = Executors.newFixedThreadPool((new Preferences(ctx)).getMaxTileDownloadThreads());
 	}
 
 	// ===========================================================
@@ -65,14 +66,14 @@ public class OpenStreetMapTileDownloader extends OpenStreetMapAsyncTileProvider 
 	@Override
 	protected Runnable getTileLoader(OpenStreetMapTile aTile, IOpenStreetMapTileProviderCallback aCallback) {
 		return new TileLoader(aTile, aCallback);
-	};
+	}
 	
 	// ===========================================================
 	// Methodsorg.andnav.osm.services
 	// ===========================================================
 
 	private String buildURL(final OpenStreetMapTile tile) {
-		OpenStreetMapTileServer renderer = OpenStreetMapTileServer.get(mCtx, tile.rendererID, false);
+		TileLayerServer renderer = TileLayerServer.get(mCtx, tile.rendererID, false);
 		// Log.d("OpenStreetMapTileDownloader","metadata loaded "+ renderer.isMetadataLoaded() + " " + renderer.getTileURLString(tile));
 		return renderer.isMetadataLoaded() ? renderer.getTileURLString(tile) : "";
 	}
@@ -118,12 +119,12 @@ public class OpenStreetMapTileDownloader extends OpenStreetMapAsyncTileProvider 
 					if (data.length == 0) {
 						throw new IOException("no tile data");
 					}
+					mCallback.mapTileLoaded(mTile.rendererID, mTile.zoomLevel, mTile.x, mTile.y, data);
 					
 					OpenStreetMapTileDownloader.this.mMapTileFSProvider.saveFile(mTile, data);
 					if(Log.isLoggable(DEBUGTAG, Log.DEBUG)) {
-						Log.d(DEBUGTAG, "Maptile saved to: " + tileURLString);
+						Log.d(DEBUGTAG, "Maptile " + tileURLString + " saved");
 					}
-					mCallback.mapTileLoaded(mTile.rendererID, mTile.zoomLevel, mTile.x, mTile.y, data);
 				}
 			} catch (IOException ioe) {
 				try {
@@ -157,6 +158,5 @@ public class OpenStreetMapTileDownloader extends OpenStreetMapAsyncTileProvider 
 				finished();
 			}
 		}
-	};
-	
+	}
 }

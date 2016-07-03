@@ -18,14 +18,6 @@ import java.util.Collection;
 import java.util.Locale;
 import java.util.zip.GZIPInputStream;
 
-import de.blau.android.tasks.Note;
-import de.blau.android.tasks.NoteComment;
-import de.blau.android.util.DateFormatter;
-import oauth.signpost.OAuthConsumer;
-import oauth.signpost.exception.OAuthCommunicationException;
-import oauth.signpost.exception.OAuthExpectationFailedException;
-import oauth.signpost.exception.OAuthMessageSignerException;
-
 import org.acra.ACRA;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -42,9 +34,16 @@ import de.blau.android.exception.OsmException;
 import de.blau.android.exception.OsmIOException;
 import de.blau.android.exception.OsmServerException;
 import de.blau.android.services.util.StreamUtils;
+import de.blau.android.tasks.Note;
+import de.blau.android.tasks.NoteComment;
 import de.blau.android.util.Base64;
+import de.blau.android.util.DateFormatter;
 import de.blau.android.util.OAuthHelper;
 import de.blau.android.util.SavingHelper;
+import oauth.signpost.OAuthConsumer;
+import oauth.signpost.exception.OAuthCommunicationException;
+import oauth.signpost.exception.OAuthExpectationFailedException;
+import oauth.signpost.exception.OAuthMessageSignerException;
 
 /**
  * @author mb
@@ -339,7 +338,7 @@ public class Server {
 						result.dbStatus = Capabilities.stringToStatus(parser.getAttributeValue(null, "database"));
 						result.apiStatus = Capabilities.stringToStatus(parser.getAttributeValue(null, "api"));
 						result.gpxStatus = Capabilities.stringToStatus(parser.getAttributeValue(null, "gpx"));
-						Log.d("Server","getCapabilities service status FB " + result.dbStatus + " API " + result.apiStatus + " GPX " + result.gpxStatus);
+						Log.d("Server","getCapabilities service status DB " + result.dbStatus + " API " + result.apiStatus + " GPX " + result.gpxStatus);
 					}	
 					if (eventType == XmlPullParser.START_TAG && "blacklist".equals(tagName)) {
 						if (result.imageryBlacklist == null) {
@@ -372,7 +371,7 @@ public class Server {
 	}
 
 	public boolean apiAvailable() {
-		return capabilities.apiStatus.equals(Capabilities.Status.ONLINE);
+		return capabilities.apiStatus.equals(Capabilities.Status.ONLINE) || capabilities.apiStatus.equals(Capabilities.Status.READONLY);
 	}
 	
 	public boolean readableDB() {

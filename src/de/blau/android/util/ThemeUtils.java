@@ -1,12 +1,14 @@
 package de.blau.android.util;
 
-import de.blau.android.R;
-import de.blau.android.prefs.Preferences;
 import android.content.Context;
+import android.content.res.Resources;
+import android.content.res.TypedArray;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
+import de.blau.android.R;
+import de.blau.android.prefs.Preferences;
 
 /**
  * 
@@ -30,7 +32,11 @@ public final class ThemeUtils {
     public static int getStyleAttribColorValue(final Context context, final int attribResId, final int defaultValue) {
         final TypedValue tv = new TypedValue();
         final boolean found = context.getTheme().resolveAttribute(attribResId, tv, true);
-        return found ? tv.data : defaultValue;
+        if (!found) {
+        	Log.d("ThemeUtils", "themed color not found");
+        	return defaultValue;
+        }
+        return tv.data;
     }
     
     public static int getResIdFromAttribute(final Context context,final int attr)
@@ -45,6 +51,23 @@ public final class ThemeUtils {
     		return 0;
     	}
     	return typedvalueattr.resourceId; 
+    }
+    
+    public static int getDimensionFromAttribute(final Context context,final int attr)
+    {
+    	int[] attrs = new int[] { attr /* index 0 */};
+    	TypedArray ta = null;
+    	try {
+			ta = context.getTheme().obtainStyledAttributes(attrs);
+			return ta.getDimensionPixelSize(0, 0);
+		} catch (Resources.NotFoundException nfe) {
+    		Log.d("ThemeUtils", "getIntFromAttribute attr "+ attr + " not found");
+    		return 0;
+		} finally {
+			if (ta != null) {
+				ta.recycle();
+			}
+		} 	
     }
     
     public static LayoutInflater getLayoutInflater(Context caller) {

@@ -3,19 +3,14 @@ package de.blau.android.propertyeditor;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.acra.ACRA;
 
-import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.pm.ActivityInfo;
-import android.content.res.Configuration;
-import android.graphics.Point;
-import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.v4.app.Fragment;
@@ -23,33 +18,41 @@ import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentPagerAdapter;
 import android.support.v4.app.FragmentTransaction;
 import android.support.v4.view.PagerTabStrip;
+import android.support.v4.view.ViewPager;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.AlertDialog;
+import android.support.v7.view.ActionMode;
+import android.support.v7.widget.Toolbar;
 import android.util.Log;
-import android.view.Display;
 import android.view.KeyEvent;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnKeyListener;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
-
-import com.actionbarsherlock.app.ActionBar;
-import com.actionbarsherlock.app.SherlockFragment;
-import com.actionbarsherlock.app.SherlockFragmentActivity;
-import com.actionbarsherlock.view.ActionMode;
-
 import de.blau.android.Application;
 import de.blau.android.Main;
 import de.blau.android.R;
+import de.blau.android.names.Names.TagMap;
 import de.blau.android.osm.OsmElement;
+import de.blau.android.osm.OsmElement.ElementType;
 import de.blau.android.osm.Relation;
 import de.blau.android.osm.RelationMemberDescription;
 import de.blau.android.osm.StorageDelegator;
 import de.blau.android.prefs.Preferences;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetItem;
+import de.blau.android.presets.ValueWithCount;
 import de.blau.android.propertyeditor.PresetFragment.OnPresetSelectedListener;
+import de.blau.android.util.BaseFragment;
+import de.blau.android.util.BugFixedAppCompatActivity;
+import de.blau.android.util.PlaceTagValueAdapter;
 import de.blau.android.util.SavingHelper;
+import de.blau.android.util.StreetTagValueAdapter;
+import de.blau.android.util.ThemeUtils;
 import de.blau.android.util.Util;
 import de.blau.android.views.ExtendedViewPager;
 
@@ -57,25 +60,35 @@ import de.blau.android.views.ExtendedViewPager;
  * An Activity to edit OSM-Tags. Sends the edited Tags as Result to its caller-Activity (normally {@link Main}).
  * 
  * @author mb
+ * @author simon
  */
-public class PropertyEditor extends SherlockFragmentActivity implements 
-		 OnPresetSelectedListener, TagUpdate {
-	private static final String PRESET_FRAGMENT = "preset_fragment";
-	private static final String RECENTPRESETS_FRAGMENT = "recentpresets_fragment";
+public class PropertyEditor extends BugFixedAppCompatActivity implements 
+		 OnPresetSelectedListener, EditorUpdate, FormUpdate, PresetFilterUpdate, NameAdapters {
+	static final String PRESET_FRAGMENT = "preset_fragment";
+	static final String RECENTPRESETS_FRAGMENT = "recentpresets_fragment";
 	
 	public static final String TAGEDIT_DATA = "dataClass";
 	public static final String TAGEDIT_LAST_ADDRESS_TAGS = "applyLastTags";
 	public static final String TAGEDIT_SHOW_PRESETS = "showPresets";
+	public static final String TAGEDIT_ASK_FOR_NAME = "askForName";
 	
 	/** The layout containing the edit rows */
 	LinearLayout rowLayout = null;
 	
+	private PresetFragment presetFragment;
+	int presetFragmentPosition = -1;
+	
+	private TagFormFragment tagFormFragment;
+	int	tagFormFragmentPosition = -1;
+	
 	TagEditorFragment tagEditorFragment;
 	int	tagEditorFragmentPosition = -1;
-	int presetFragmentPosition = -1;
+
 	RelationMembershipFragment relationMembershipFragment;
 	RelationMembersFragment relationMembersFragment;
 	RecentPresetsFragment recentPresetsFragment;
+	
+	PropertyEditorPagerAdapter  propertyEditorPagerAdapter;
 	
 	/**
 	 * The tag we use for Android-logging.
@@ -97,6 +110,7 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	
 	private boolean applyLastAddressTags = false;
 	private boolean showPresets = false;
+	private boolean askForName = false;
 	
 	/**
 	 * Handles "enter" key presses.
@@ -110,6 +124,17 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	 * Needs to be static to be accessible in TagEditRow.
 	 */
 	static boolean running = false;
+	
+	/**
+	 * Display form based editing
+	 */
+	private boolean formEnabled = false;
+	
+	/**
+	 * Used both in the form and conventional tag editor fragments
+	 */
+	private StreetTagValueAdapter streetNameAutocompleteAdapter = null;
+	private PlaceTagValueAdapter placeNameAutocompleteAdapter = null;
 	
 	/**
 	 * 
@@ -128,23 +153,23 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 				= new SavingHelper<LinkedHashMap<String,String>>();
 		
 	private Preferences prefs = null;
-	private PresetFragment presetFragment;
 	ExtendedViewPager    mViewPager;
 	boolean usePaneLayout = false;
+	boolean isRelation = false;
 
 	public static void startForResult(@NonNull Activity activity,
 									  @NonNull PropertyEditorData[] dataClass,
 									  boolean applyLastTags,
 									  boolean showPresets,
-									  int requestCode) {
+									  boolean askForName, int requestCode) {
 		Intent intent = new Intent(activity, PropertyEditor.class);
 		intent.putExtra(TAGEDIT_DATA, dataClass);
 		intent.putExtra(TAGEDIT_LAST_ADDRESS_TAGS, Boolean.valueOf(applyLastTags));
 		intent.putExtra(TAGEDIT_SHOW_PRESETS, Boolean.valueOf(showPresets));
+		intent.putExtra(TAGEDIT_ASK_FOR_NAME, Boolean.valueOf(askForName));
 		activity.startActivityForResult(intent, requestCode);
 	}
 
-	@SuppressLint("NewApi")
 	@Override
 	protected void onCreate(final Bundle savedInstanceState) {
 		int currentItem = -1; // used when restoring
@@ -154,13 +179,11 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 		}
 		
 		super.onCreate(savedInstanceState);
-		// super.onCreate(null); // hack to stop the system recreating the fragments from the stored state
+		
+		// requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
 		
 		if (prefs.splitActionBarEnabled()) {
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-				getWindow().setUiOptions(ActivityInfo.UIOPTION_SPLIT_ACTION_BAR_WHEN_NARROW); // this might need to be set with bit ops
-			}
-			// besides hacking ABS, there is no equivalent method to enable this for ABS
+			// TODO determine if we ant to reinstate the bottom bar
 		} 
 
 		// tags
@@ -170,11 +193,11 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 			loadData = PropertyEditorData.deserializeArray(getIntent().getSerializableExtra(TAGEDIT_DATA));
 			applyLastAddressTags = (Boolean)getIntent().getSerializableExtra(TAGEDIT_LAST_ADDRESS_TAGS); 
 			showPresets = (Boolean)getIntent().getSerializableExtra(TAGEDIT_SHOW_PRESETS);
+			askForName = (Boolean)getIntent().getSerializableExtra(TAGEDIT_ASK_FOR_NAME);
 		} else {
 			// Restore activity from saved state
 			Log.d(DEBUG_TAG, "Restoring from savedInstanceState");
 			loadData = PropertyEditorData.deserializeArray(getIntent().getSerializableExtra(TAGEDIT_DATA));
-			// applyLastTags = (Boolean)savedInstanceState.getSerializable(TAGEDIT_LASTTAGS); not saved
 			currentItem = savedInstanceState.getInt("CURRENTITEM",-1);
 		}
 				
@@ -202,21 +225,7 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 		
 		presets = Application.getCurrentPresets(this);
 		
-		int screenSize = getResources().getConfiguration().screenLayout &
-		        Configuration.SCREENLAYOUT_SIZE_MASK;
-		// reliable determine if we are in landscape mode
-		Display display = getWindowManager().getDefaultDisplay();
-		Point size = new Point();
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR2) {
-			display.getSize(size);
-		} else {
-			//noinspection deprecation
-			size.x = display.getWidth();
-			//noinspection deprecation
-			size.y = display.getHeight();
-		}
-
-		if ((screenSize == Configuration.SCREENLAYOUT_SIZE_LARGE || screenSize == Configuration.SCREENLAYOUT_SIZE_XLARGE) && size.x > size.y) {
+		if (Util.isLandscape(this)) {
 			usePaneLayout = true;
 			setContentView(R.layout.pane_view);
 			Log.d(DEBUG_TAG, "Using layout for large devices");
@@ -224,7 +233,11 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 			setContentView(R.layout.tab_view);	
 		}
 		
-		
+        // Find the toolbar view inside the activity layout
+        Toolbar toolbar = (Toolbar) findViewById(R.id.propertyEditorBar);
+        // Sets the Toolbar to act as the ActionBar for this Activity window.
+        setSupportActionBar(toolbar);
+        
 		// tags
 		ArrayList<LinkedHashMap<String, String>> tags = new ArrayList<LinkedHashMap<String, String>>();
 		originalTags = new ArrayList<LinkedHashMap<String, String>>();
@@ -233,27 +246,29 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 			tags.add((LinkedHashMap<String, String>) loadData[i].tags);
 		}
 				
-		if (loadData.length == 1) { // for now no support of relations 
+		if (loadData.length == 1) { // for now no support of relations and form for multi-select
 			// parent relations
 			originalParents = loadData[0].originalParents != null ? loadData[0].originalParents : loadData[0].parents;
 
 			if (types[0].endsWith(Relation.NAME)) {
 				// members of this relation
 				originalMembers = loadData[0].originalMembers != null ? loadData[0].originalMembers : loadData[0].members;
+				isRelation = true;
 			}
+			
+			formEnabled = prefs.tagFormEnabled();
 		}
 		
-		PropertyEditorPagerAdapter  propertyEditorPagerAdapter =
+		propertyEditorPagerAdapter =
                 new PropertyEditorPagerAdapter(getSupportFragmentManager(),tags);
 		mViewPager = (ExtendedViewPager) findViewById(R.id.pager);
 		PagerTabStrip pagerTabStrip = (PagerTabStrip) mViewPager.findViewById(R.id.pager_header);
 		pagerTabStrip.setDrawFullUnderline(true);
-		pagerTabStrip.setTabIndicatorColorResource(android.R.color.holo_blue_dark);
+		pagerTabStrip.setTabIndicatorColor(ThemeUtils.getStyleAttribColorValue(this,R.attr.colorAccent,R.color.dark_grey));
 
 		ActionBar actionbar = getSupportActionBar();
 		actionbar.setDisplayShowTitleEnabled(false);
 		actionbar.setDisplayHomeAsUpEnabled(true);
-		
 		
 		if (usePaneLayout) { // add both preset fragments to panes
 			Log.d(DEBUG_TAG,"Adding MRU prests");
@@ -270,22 +285,35 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 			if (presetFragment != null) {
 				ft.remove(presetFragment);
 			}
-			presetFragment = PresetFragment.newInstance(elements[0]); // FIXME collect tags
+			presetFragment = PresetFragment.newInstance(elements[0],true); // FIXME collect tags
 			ft.add(R.id.preset_row,presetFragment,PRESET_FRAGMENT);
 			
 			ft.commit();
 			
 			// this essentially has to be hardwired
 			presetFragmentPosition = 0;
-			tagEditorFragmentPosition = 0;
+			if (formEnabled) {
+				tagFormFragmentPosition = 0;
+				tagEditorFragmentPosition = 1; // FIXME
+			} else {
+				tagFormFragmentPosition = 0;
+				tagEditorFragmentPosition = 0; // FIXME
+			}
 		} else {
 			presetFragmentPosition = 0;
-			tagEditorFragmentPosition = 1;
+			if (formEnabled) {
+				tagFormFragmentPosition = 1;
+				tagEditorFragmentPosition = 2; // FIXME
+			} else {
+				tagFormFragmentPosition = 1;
+				tagEditorFragmentPosition = 1; // FIXME
+			}
 		}
 		
-		mViewPager.setOffscreenPageLimit(3); // FIXME currently this is required or else some of the logic between the fragments will not work
+		mViewPager.setOffscreenPageLimit(4); // FIXME currently this is required or else some of the logic between the fragments will not work
 		mViewPager.setAdapter(propertyEditorPagerAdapter);
-		mViewPager.setCurrentItem(currentItem != -1 ? currentItem : (showPresets ? presetFragmentPosition : tagEditorFragmentPosition));
+		mViewPager.addOnPageChangeListener(new PageChangeListener());
+		mViewPager.setCurrentItem(currentItem != -1 ? currentItem : (showPresets ? presetFragmentPosition : (formEnabled ? tagFormFragmentPosition : tagEditorFragmentPosition)));
 	}
 	
 	private void abort() {
@@ -306,7 +334,7 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 		Log.d(DEBUG_TAG,"onResume");
 		super.onResume();
 		running = true;
-		Address.loadLastAddresses();
+		Address.loadLastAddresses(this);
 		Log.d(DEBUG_TAG,"onResume done");
 	}
 
@@ -314,6 +342,19 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	protected void onDestroy() {
 		Log.d(DEBUG_TAG,"onDestroy");
 		super.onDestroy();
+	}
+	
+	@Override
+	public boolean onOptionsItemSelected(MenuItem item) {
+		// Due to a problem of not being able to intercept android.R.id.home in fragments on older android versions
+		// we start passing the event to the currently displayed fragment.
+		// REF: http://stackoverflow.com/questions/21938419/intercepting-actionbar-home-button-in-fragment	
+		Fragment fragment = ((PropertyEditorPagerAdapter) mViewPager.getAdapter()).getItem(false,mViewPager.getCurrentItem());
+		if (item.getItemId() == android.R.id.home && fragment != null && fragment.getView() != null && fragment.onOptionsItemSelected(item)) {
+			Log.d(DEBUG_TAG,"called fragment onOptionsItemSelected");
+			return true;
+		}
+		return super.onOptionsItemSelected(item);
 	}
 		
 	public class PropertyEditorPagerAdapter extends FragmentPagerAdapter {
@@ -334,73 +375,141 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	    		} else {
 	    			pages = 3;
 	    		}
+	    		if (formEnabled) {
+	    			pages++;
+	    		}
 	    	} else {
 	    		pages = 2;
 	    	}
 	    	return usePaneLayout ? pages -1 : pages; // preset page not in pager
 	    }
 
-	    @Override
-	    public SherlockFragment getItem(int position) {
-	    	Log.d(DEBUG_TAG, "getItem " + position);
-	    	// presets
-			if (!usePaneLayout) {
-				switch(position) {
-				case 0: 
-					presetFragment = PresetFragment.newInstance(elements[0]); // FIXME collect tags to determine presets
-					return presetFragment;
-				case 1: 		
-					tagEditorFragment = TagEditorFragment.newInstance(elements, tags, applyLastAddressTags, loadData[0].focusOnKey, !usePaneLayout);
-					return tagEditorFragment;
-				case 2:
-					if (loadData.length == 1) {
-						relationMembershipFragment = RelationMembershipFragment.newInstance(loadData[0].parents);
-						return relationMembershipFragment;
-					}
-					break;
-				case 3:
-					if (loadData.length == 1 && types[0].endsWith(Relation.NAME)) {
-						relationMembersFragment = RelationMembersFragment.newInstance(osmIds[0],loadData[0].members);
-						return relationMembersFragment;
-					}
-					break;
-				}
-			} else {
-				switch(position) {
-				case 0: 		
-					tagEditorFragment = TagEditorFragment.newInstance(elements, tags, applyLastAddressTags, loadData[0].focusOnKey, !usePaneLayout);
-					return tagEditorFragment;
-				case 1:
-					if (loadData.length == 1) {
-						relationMembershipFragment = RelationMembershipFragment.newInstance(loadData[0].parents);
-						return relationMembershipFragment;
-					}
-					break;
-				case 2:
-					if (loadData.length == 1 && types[0].endsWith(Relation.NAME)) {
-						relationMembersFragment = RelationMembersFragment.newInstance(osmIds[0],loadData[0].members);
-						return relationMembersFragment;
-					}
-					break;
-				}
+	    Fragment tagFormFragment(int position, boolean displayRecentPresets) {
+			tagFormFragmentPosition = position;
+			tagFormFragment = TagFormFragment.newInstance(displayRecentPresets, applyLastAddressTags, loadData[0].focusOnKey, askForName);
+			return tagFormFragment;
+	    }
+	    
+	    Fragment tagEditorFragment(int position, boolean displayRecentPresets) {
+	    	tagEditorFragmentPosition = position;
+	    	tagEditorFragment = TagEditorFragment.newInstance(elements, tags, applyLastAddressTags, loadData[0].focusOnKey, displayRecentPresets);
+			return tagEditorFragment;
+	    }
+	    
+	    Fragment relationMembershipFragment() {
+	    	if (loadData.length == 1) {
+	    		relationMembershipFragment = RelationMembershipFragment.newInstance(loadData[0].parents);
+				return relationMembershipFragment;
 			}
-	        return null;
+	    	return null;
+	    }
+	    
+	    Fragment relationMembersFragment() {
+	    	if (loadData.length == 1 && types[0].endsWith(Relation.NAME)) {
+				relationMembersFragment = RelationMembersFragment.newInstance(osmIds[0],loadData[0].members);
+				return relationMembersFragment;
+			}
+	    	return null;
+	    }
+	    
+	    @Override
+	    public Fragment getItem(int position) {
+	    	return getItem(true, position);
+	    }
+	    
+	    public Fragment getItem(boolean instantiate, int position) {
+	    	Log.d(DEBUG_TAG, "getItem " + instantiate + " " + position);
+	    	if (formEnabled) {
+	    		if (!usePaneLayout) {
+	    			switch(position) {
+	    			case 0: 
+	    				if (instantiate) {
+	    					presetFragment = PresetFragment.newInstance(elements[0], false); // 
+	    				}
+	    				return presetFragment;
+	    			case 1: 		
+	    				return instantiate ? tagFormFragment(position, true) : tagFormFragment;
+	    			case 2: 		
+	    				return instantiate ? tagEditorFragment(position, false) : tagEditorFragment;
+	    			case 3:
+	    				return isRelation ? (instantiate ? relationMembersFragment() : relationMembersFragment) : (instantiate ? relationMembershipFragment() : relationMembershipFragment);
+	    			case 4:
+	    				return instantiate ? relationMembershipFragment() : relationMembershipFragment;
+	    			}
+	    		} else {
+	    			switch(position) {
+	    			case 0: 		
+	    				return instantiate ? tagFormFragment(position, false) : tagFormFragment;
+	    			case 1: 		
+	    				return instantiate ? tagEditorFragment(position, false) : tagEditorFragment;
+	    			case 2:
+	    				return isRelation ? (instantiate ? relationMembersFragment() : relationMembersFragment) : (instantiate ? relationMembershipFragment() : relationMembershipFragment);
+	    			case 3:
+	    				return instantiate ? relationMembershipFragment() : relationMembershipFragment;
+	    			}
+	    		}
+	    	} else  {
+	    		if (!usePaneLayout) {
+	    			switch(position) {
+	    			case 0: 
+	    				if (instantiate) {
+	    					presetFragment = PresetFragment.newInstance(elements[0], false); // 
+	    				}
+	    				return presetFragment;
+	    			case 1: 		
+	    				return instantiate ? tagEditorFragment(position, true) : tagEditorFragment;
+	    			case 2:
+	    				return isRelation ? (instantiate ? relationMembersFragment() : relationMembersFragment) : (instantiate ? relationMembershipFragment() : relationMembershipFragment);
+	    			case 3:
+	    				return instantiate ? relationMembershipFragment() : relationMembershipFragment;
+	    			}
+	    		} else {
+	    			switch(position) {
+	    			case 0: 		
+	    				return instantiate ? tagEditorFragment(position, false) :tagEditorFragment;
+	    			case 2:
+	    				return isRelation ? (instantiate ? relationMembersFragment() : relationMembersFragment) : (instantiate ? relationMembershipFragment() : relationMembershipFragment);
+	    			case 3:
+	    				return instantiate ? relationMembershipFragment() : relationMembershipFragment;
+	    			}
+	    		}
+	    	}
+	    	return null;
 	    }
 
 	    @Override
 	    public CharSequence getPageTitle(int position) {
-	    	if (!usePaneLayout) {
-	    		switch(position) {
-	    		case 0: return getString(R.string.tag_menu_preset);
-	    		case 1: return getString(R.string.menu_tags);
-	    		case 2: return getString(R.string.relations);
-	    		case 3: return getString(R.string.members);
+	    	if (formEnabled) {
+	    		if (!usePaneLayout) {
+	    			switch(position) {
+	    			case 0: return getString(R.string.tag_menu_preset);
+	    			case 1: return getString(R.string.menu_tags);
+	    			case 2: return getString(R.string.tag_details);
+	    			case 3: return isRelation ? getString(R.string.members) : getString(R.string.relations);
+	    			case 4: return getString(R.string.relations);
+	    			}
+	    		} else {
+	    			switch(position) {
+	    			case 0: return getString(R.string.menu_tags);
+	    			case 1: return getString(R.string.tag_details);
+	    			case 2: return isRelation ? getString(R.string.members) : getString(R.string.relations);
+	    			case 3: return getString(R.string.relations);
+	    			}
 	    		}
 	    	} else {
-	    		switch(position) {
-	    		case 0: return getString(R.string.menu_tags);
-	    		case 1: return getString(R.string.relations);
-	    		case 2: return getString(R.string.members);
+	    		if (!usePaneLayout) {
+	    			switch(position) {
+	    			case 0: return getString(R.string.tag_menu_preset);
+	    			case 1: return getString(R.string.menu_tags);
+	    			case 2: return isRelation ? getString(R.string.members) : getString(R.string.relations);
+	    			case 3: return getString(R.string.relations);
+	    			}
+	    		} else {
+	    			switch(position) {
+	    			case 0: return getString(R.string.menu_tags);
+	    			case 1: return isRelation ? getString(R.string.members) : getString(R.string.relations);
+	    			case 2: return getString(R.string.relations);
+	    			}
 	    		}
 	    	}
 	    	return "error";
@@ -408,9 +517,12 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	    
 	    @Override
 	    public Object instantiateItem(ViewGroup container, int position) {
-	        Fragment fragment = (Fragment) super.instantiateItem(container, position);
+	        BaseFragment fragment = (BaseFragment) super.instantiateItem(container, position);
 	        // update fragment refs here
-	        if (fragment instanceof TagEditorFragment) {
+	        if (fragment instanceof TagFormFragment) {
+	        	tagFormFragment = (TagFormFragment) fragment;
+	        	Log.d(DEBUG_TAG, "Restored ref to TagFormFragment");
+	        } else if (fragment instanceof TagEditorFragment) {
 	        	tagEditorFragment = (TagEditorFragment) fragment;
 	        	Log.d(DEBUG_TAG, "Restored ref to TagEditorFragment");
 	        } else if (fragment instanceof RelationMembershipFragment) {
@@ -429,6 +541,16 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	    }
 	}
 	
+	class PageChangeListener extends ViewPager.SimpleOnPageChangeListener {
+		@Override
+		public void onPageSelected(int page) {
+			Log.d(DEBUG_TAG,"page " + page + " selected");
+			if (formEnabled && page == tagFormFragmentPosition && tagFormFragment != null) {
+				tagFormFragment.update();
+			}
+		}
+	}
+	
 	/**
 	 * Removes an old RecentPresetView and replaces it by a new one (to update it)
 	 */
@@ -440,7 +562,11 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 				((RecentPresetsFragment)recentPresetsFragment).recreateRecentPresetView();
 			}
 		} else {
-			tagEditorFragment.recreateRecentPresetView();
+			if (tagFormFragment != null) {
+				tagFormFragment.recreateRecentPresetView();
+			} else {
+				tagEditorFragment.recreateRecentPresetView();
+			}
 		}
 	}
 	
@@ -460,15 +586,18 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 			}
 		}
 		// if we haven't edited just exit
-		if (!same(currentTags,originalTags) || (currentParents != null && !currentParents.equals(originalParents)) || (elements[0] != null && elements[0].getName().equals(Relation.NAME) && (currentMembers != null && !currentMembers.equals(originalMembers)))) {
-		    new AlertDialog.Builder(this)
-	        .setNeutralButton(R.string.cancel, null)
-	        .setNegativeButton(R.string.tag_menu_revert,        	
-	        		new DialogInterface.OnClickListener() {
-	            	@Override
-					public void onClick(DialogInterface arg0, int arg1) {
-//	            		doRevert();
-	            }})
+		if (!same(currentTags,originalTags) // tags different 
+				|| ((currentParents != null && !currentParents.equals(originalParents)) && !(originalParents==null && (currentParents == null || currentParents.size()==0))) // parents changed
+				|| (elements[0] != null && elements[0].getName().equals(Relation.NAME) && (currentMembers != null && !sameMembers(currentMembers,originalMembers)))) {
+			new AlertDialog.Builder(this)
+			.setNeutralButton(R.string.cancel, null)
+			.setNegativeButton(R.string.tag_menu_revert,        	
+					new DialogInterface.OnClickListener() {
+				@Override
+				public void onClick(DialogInterface arg0, int arg1) {
+					doRevert();
+				}
+			})
 	        .setPositiveButton(R.string.tag_menu_exit_no_save, 
 	        	new DialogInterface.OnClickListener() {
 		            @Override
@@ -478,6 +607,21 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	        }).create().show();
 		} else {
 			PropertyEditor.super.onBackPressed();
+		}
+	}
+	
+	/*
+	 * Revert changes in all fragments
+	 */
+	private void doRevert() {
+		if (tagEditorFragment != null) {
+			tagEditorFragment.doRevert();
+		}
+		if (relationMembershipFragment != null) {
+			relationMembershipFragment.doRevert();
+		}
+		if (relationMembersFragment != null) {
+			relationMembersFragment.doRevert();
 		}
 	}
 		
@@ -501,7 +645,7 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 		// Save tags to our clipboard
 		LinkedHashMap<String,String> copiedTags = tagEditorFragment.getCopiedTags();
 		if (copiedTags != null) {
-			savingHelper.save(COPIED_TAGS_FILE, copiedTags, false);
+			savingHelper.save(this, COPIED_TAGS_FILE, copiedTags, false);
 		}
 		// save any address tags for "last address tags"
 		if (currentTags != null && currentTags.size() == 1) {
@@ -545,7 +689,8 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	}
 	
 	/**
-	 * Check if two set of tags are the same
+	 * Check if two lists of tags are the same
+	 * Note: this considers order relevant
 	 * @return
 	 */
 	boolean same(ArrayList<LinkedHashMap<String,String>> tags1, ArrayList<LinkedHashMap<String,String>> tags2){
@@ -555,6 +700,34 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 		}
 		for (int i=0;i<tags1.size();i++) {
 			if (!tags1.get(i).equals(tags2.get(i))) {
+				return false;
+			}
+		}
+		return true;
+	}
+	
+	/**
+	 * Check if two lists of RelationMembetDescription are the same
+	 * Note: this considers order relevant
+	 * @return
+	 */
+	boolean sameMembers(ArrayList<RelationMemberDescription> rmds1, ArrayList<RelationMemberDescription> rmds2){
+		if (rmds1==null) {
+			return rmds2==null;
+		}
+		if (rmds2==null) {
+			return rmds1==null;
+		}
+		if (rmds1.size() != rmds2.size()) { /// serious error
+			return false;
+		}
+		for (int i=0;i<rmds1.size();i++) {
+			RelationMemberDescription rmd1 = rmds1.get(i);
+			RelationMemberDescription rmd2 = rmds2.get(i);
+			if (rmd1 == rmd2) {
+				continue;
+			}
+			if (rmd1 != null && !rmd1.equals(rmd2)) {
 				return false;
 			}
 		}
@@ -585,7 +758,7 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 				}
 			}
 		}
-		Address.saveLastAddresses();
+		Address.saveLastAddresses(this);
 		super.onPause();
 	}
 	
@@ -622,21 +795,25 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	
 	@Override
 	public void onPresetSelected(PresetItem item) {
+		onPresetSelected(item, false);
+	}
+	
+	@Override
+	public void onPresetSelected(PresetItem item, boolean applyOptional) {
 		if (item != null) {
-			mViewPager.setCurrentItem(tagEditorFragmentPosition);
-			tagEditorFragment.applyPreset(item);
-			if (usePaneLayout) {
-				FragmentManager fm = getSupportFragmentManager();
-				Fragment recentPresetsFragment = fm.findFragmentByTag(RECENTPRESETS_FRAGMENT);
-				if (recentPresetsFragment != null) {
-					((RecentPresetsFragment)recentPresetsFragment).recreateRecentPresetView();
-				}
+			tagEditorFragment.applyPreset(item, applyOptional, true);
+			if (tagFormFragment != null) {
+				tagFormFragment.update();
+				mViewPager.setCurrentItem(tagFormFragmentPosition);
+			} else {
+				mViewPager.setCurrentItem(tagEditorFragmentPosition);
 			}
+			recreateRecentPresetView();
 		}
 	}
 	
 	/**
-	 * Allow ViewPAger to work
+	 * Allow ViewPager to work
 	 */
 	public void enablePaging() {
 		mViewPager.setPagingEnabled(true);
@@ -699,31 +876,224 @@ public class PropertyEditor extends SherlockFragmentActivity implements
 	}
 	
 	@Override
+	public void revertTags() {
+		if (tagEditorFragment != null) {
+			tagEditorFragment.revertTags();
+		} else {
+			Log.e(DEBUG_TAG,"revertTags tagEditorFragment is null");
+		}
+	}
+	
+	@Override
+	public void deleteTag(final String key) {
+		if (tagEditorFragment != null) {
+			tagEditorFragment.deleteTag(key);
+		} else {
+			Log.e(DEBUG_TAG,"deleteTag tagEditorFragment is null");
+		}
+	}
+	
 	public ArrayList<LinkedHashMap<String, String>> getUpdatedTags() {
 		if (tagEditorFragment != null) {
 			return tagEditorFragment.getUpdatedTags();
 		} else {
-			Log.e(DEBUG_TAG,"updateSingleValue tagEditorFragment is null");
+			Log.e(DEBUG_TAG,"getUpdatedTags tagEditorFragment is null");
 			return null;
 		}	
 	}
 	
+	@Override
+	public LinkedHashMap<String, String> getKeyValueMapSingle(
+			boolean allowBlanks) {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.getKeyValueMapSingle(allowBlanks);
+		} else {
+			Log.e(DEBUG_TAG,"getUpdatedTags tagEditorFragment is null");
+			return null;
+		}	
+	}
+	
+	@Override
+	public PresetItem getBestPreset() {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.getBestPreset();
+		} else {
+			Log.e(DEBUG_TAG,"getBestPreset tagEditorFragment is null");
+			return null;
+		}	
+	}
+	
+	@Override
+	public List<PresetItem> getSecondaryPresets() {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.getSecondaryPresets();
+		} else {
+			Log.e(DEBUG_TAG,"getSecondaryPresets tagEditorFragment is null");
+			return null;
+		}	
+	}
+	
+	@Override
+	public Map<String,PresetItem> getAllPresets() {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.getAllPresets();
+		} else {
+			Log.e(DEBUG_TAG,"getAllPresets tagEditorFragment is null");
+			return null;
+		}	
+	}
+	
+	@Override
+	public void updatePresets() {
+		if (tagEditorFragment != null) {
+			tagEditorFragment.updatePresets();
+		} else {
+			Log.e(DEBUG_TAG,"updatePresets tagEditorFragment is null");
+		}	
+	}
+	
+	@Override
+	public void predictAddressTags(boolean allowBlanks) {
+		if (tagEditorFragment != null) {
+			tagEditorFragment.predictAddressTags(allowBlanks);
+		} else {
+			Log.e(DEBUG_TAG,"predictAddressTags tagEditorFragment is null");
+		}	
+	}
+	
+
+	@Override
+	public void applyTagSuggestions(TagMap tags) {
+		if (tagEditorFragment != null) {
+			tagEditorFragment.applyTagSuggestions(tags);
+		} else {
+			Log.e(DEBUG_TAG,"applyTagSuggestions tagEditorFragment is null");
+		}	
+	}
+
+	@Override
+	public boolean pasteIsPossible() {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.pasteIsPossible();
+		} else {
+			Log.e(DEBUG_TAG,"pasteIsPossible tagEditorFragment is null");
+		}
+		return false;
+	}
+
+	@Override
+	public boolean paste(boolean replace) {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.paste(replace);
+		} else {
+			Log.e(DEBUG_TAG,"paste tagEditorFragment is null");
+		}
+		return false;
+	}
+
+	@Override
+	public boolean pasteFromClipboardIsPossible() {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.pasteFromClipboardIsPossible();
+		} else {
+			Log.e(DEBUG_TAG,"pasteFromClipboardIsPossible tagEditorFragment is null");
+		}
+		return false;
+	}
+
+	@Override
+	public boolean pasteFromClipboard(boolean replace) {
+		if (tagEditorFragment != null) {
+			return tagEditorFragment.pasteFromClipboard(replace);
+		} else {
+			Log.e(DEBUG_TAG,"pasteFromClipboard tagEditorFragment is null");
+		}
+		return false;
+	}
+	
+
+	@Override
+	public void copyTags(Map<String, String> tags) {
+		if (tagEditorFragment != null) {
+			tagEditorFragment.copyTags(tags);
+		} else {
+			Log.e(DEBUG_TAG,"copyTags tagEditorFragment is null");
+		}
+	}
+	
+	@Override
+	public void tagsUpdated() {
+		if (tagFormFragment != null) {
+			tagFormFragment.tagsUpdated();
+		} else {
+			Log.e(DEBUG_TAG,"tagFormFragment is null");
+		}	
+	}
+	
+
+	@Override
+	public void typeUpdated(ElementType type) {
+		if (presetFragment != null) {
+			presetFragment.typeUpdated(type);
+		} else {
+			Log.e(DEBUG_TAG,"presetFragment is null");
+		}	
+		
+	}	
+	
+	/**
+	 * Gets an adapter for the autocompletion of street names based on the neighborhood of the edited item.
+	 * @param tagValues 
+	 * @return
+	 */
+	public ArrayAdapter<ValueWithCount> getStreetNameAdapter(ArrayList<String> tagValues) {
+		if (Application.getDelegator() == null) {
+			return null;
+		}
+		if (streetNameAutocompleteAdapter == null) {
+			streetNameAutocompleteAdapter =	new StreetTagValueAdapter(this,
+					R.layout.autocomplete_row, Application.getDelegator(),
+					types[0], osmIds[0], tagValues); // FIXME
+		}
+		return streetNameAutocompleteAdapter;
+	}
+	
+	/**
+	 * Gets an adapter for the autocompletion of place names based on the neighborhood of the edited item.
+	 * @return
+	 */
+	public ArrayAdapter<ValueWithCount> getPlaceNameAdapter(ArrayList<String> tagValues) {
+		if (Application.getDelegator() == null) {
+			return null;
+		}
+		if (placeNameAutocompleteAdapter == null) {
+			placeNameAutocompleteAdapter =	new PlaceTagValueAdapter(this,
+					R.layout.autocomplete_row, Application.getDelegator(),
+					types[0], osmIds[0], tagValues); // FIXME
+		}
+		return placeNameAutocompleteAdapter;
+	}
+	
+	public OsmElement getElement() {
+		return elements[0]; // FIXME validate
+	}
+	
+	
+	@Override
+	public void onSupportActionModeFinished(ActionMode mode) {
+		super.onSupportActionModeFinished(mode);
+	}
 	
 	@Override
 	/**
 	 * Workaround for bug mentioned below
 	 */
-	public ActionMode startActionMode(final ActionMode.Callback callback) {
+	public ActionMode startSupportActionMode(final ActionMode.Callback callback) {
 	  // Fix for bug https://code.google.com/p/android/issues/detail?id=159527
-	  final ActionMode mode = super.startActionMode(callback);
+	  final ActionMode mode = super.startSupportActionMode(callback);
 	  if (mode != null) {
 	    mode.invalidate();
 	  }
 	  return mode;
-	}
-	
-	@Override
-	public void onActionModeFinished(ActionMode mode) {
-		super.onActionModeFinished(mode);
 	}
 }

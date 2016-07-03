@@ -15,7 +15,6 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -25,11 +24,12 @@ import android.content.Intent;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
+import android.support.v7.app.AlertDialog;
 import android.util.Log;
 import android.widget.Toast;
 import de.blau.android.Application;
-import de.blau.android.Main;
 import de.blau.android.R;
+import de.blau.android.dialogs.Progress;
 import de.blau.android.prefs.AdvancedPrefDatabase.PresetInfo;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.PresetIconManager;
@@ -69,7 +69,7 @@ public class PresetEditorActivity extends URLListEditActivity {
 	public void onCreate(Bundle savedInstanceState) {
 		Preferences prefs = new Preferences(this);
 		if (prefs.lightThemeEnabled()) {
-			setTheme(R.style.Theme_Sherlock_Light);
+			setTheme(R.style.Theme_customLight);
 		}
 		db = new AdvancedPrefDatabase(this);
 		super.onCreate(savedInstanceState);
@@ -174,18 +174,20 @@ public class PresetEditorActivity extends URLListEditActivity {
 			
 			@Override
 			protected void onPreExecute() {
-				progress = new ProgressDialog(PresetEditorActivity.this);
-				progress.setTitle(R.string.progress_title);
-				progress.setIndeterminate(true);
-				progress.setCancelable(true);
-				progress.setMessage(PresetEditorActivity.this.getResources().getString(R.string.progress_download_message));
-				progress.setOnCancelListener(new OnCancelListener() {
-					@Override
-					public void onCancel(DialogInterface dialog) {
-						canceled = true;
-					}
-				});
-				progress.show();
+//				progress = new ProgressDialog(PresetEditorActivity.this);
+//				progress.setTitle(R.string.progress_title);
+//				progress.setIndeterminate(true);
+//				progress.setCancelable(true);
+//				progress.setMessage(PresetEditorActivity.this.getResources().getString(R.string.progress_download_message));
+//				progress.setOnCancelListener(new OnCancelListener() {
+//					@Override
+//					public void onCancel(DialogInterface dialog) {
+//						canceled = true;
+//					}
+//				});
+//				progress.show();
+				// FIXME allow canceling and switch to non-indeterminate mode
+				Progress.showDialog(PresetEditorActivity.this, Progress.PROGRESS_PRESET);
 			}
 			
 			@Override
@@ -220,10 +222,10 @@ public class PresetEditorActivity extends URLListEditActivity {
 			 */
 			@Override
 			protected void onProgressUpdate(Integer... values) {
-				progress.setIndeterminate(false);
-				progress.setMax(values[1]);
-				progress.setProgress(values[0]);
-			};
+//				progress.setIndeterminate(false);
+//				progress.setMax(values[1]);
+//				progress.setProgress(values[0]);
+			}
 			
 			/**
 			 * 
@@ -273,7 +275,8 @@ public class PresetEditorActivity extends URLListEditActivity {
 			
 			@Override
 			protected void onPostExecute(Integer result) {
-				progress.dismiss();
+				// progress.dismiss();
+				Progress.dismissDialog(PresetEditorActivity.this, Progress.PROGRESS_PRESET);
 				switch (result) {
 				case RESULT_TOTAL_SUCCESS:
 					Toast.makeText(PresetEditorActivity.this, R.string.preset_download_successful, Toast.LENGTH_LONG).show();

@@ -18,8 +18,7 @@
         	android:saveEnabled="false"
         	android:text=""
         	android:layout_width="34dp"
-        	android:layout_height="fill_parent"
-        	android:layout_gravity="center_vertical" 
+        	android:layout_height="fill_parent" 
        		android:paddingLeft="5dp"
 	    	android:paddingRight="5dp"
 	    	android:layout_marginBottom="1dp"
@@ -34,7 +33,7 @@
 	        android:layout_marginRight="1dp"
 	        android:layout_weight="3"
 	        android:completionThreshold="1"
-	        android:dropDownWidth="wrap_content"
+	        android:dropDownWidth="match_parent"
 	        android:hint="@string/role_lc"
 	        android:inputType="textNoSuggestions"
 	        android:minHeight="34dp"
@@ -43,21 +42,19 @@
 	        android:singleLine="true"
 	         />
 	        
-	    <TextView
+	    <ImageView
 	        android:id="@+id/memberType"
 	        style="?attr/DownloadedMember"
 	        android:saveEnabled="false"
-	        android:layout_width="fill_parent"
+	        android:layout_width="34dp"
 	        android:layout_height="wrap_content"
 	        android:layout_marginBottom="1dp"
 	        android:layout_marginRight="1dp"
-	        android:layout_weight="3"
 	        android:minHeight="35dp"
-	        android:paddingLeft="5dp"
-	        android:paddingRight="5dp"
+	        android:paddingLeft="0dp"
+	        android:paddingRight="0dp"
 	        android:singleLine="true"
 	        android:gravity="center_vertical"
-	        android:layout_gravity="center_vertical"
 	        />
 	    
 	    <TextView
@@ -73,7 +70,6 @@
 	        android:paddingRight="5dp"
 	        android:singleLine="true"
 	        android:gravity="center_vertical"
-	        android:layout_gravity="center_vertical"
 	        />
     </LinearLayout>
 </view>

@@ -3,11 +3,13 @@ package de.blau.android;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.WeakHashMap;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -21,10 +23,10 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Region;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.location.Location;
 import android.os.Build;
-import android.util.DisplayMetrics;
-import android.util.Log;
+import android.support.v4.content.ContextCompat;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -42,17 +44,18 @@ import de.blau.android.osm.Way;
 import de.blau.android.prefs.Preferences;
 import de.blau.android.presets.Preset;
 import de.blau.android.presets.Preset.PresetItem;
-import de.blau.android.resources.Profile;
-import de.blau.android.resources.Profile.FeatureProfile;
+import de.blau.android.resources.DataStyle;
+import de.blau.android.resources.DataStyle.FeatureStyle;
+import de.blau.android.resources.TileLayerServer;
 import de.blau.android.services.TrackerService;
 import de.blau.android.util.Density;
 import de.blau.android.util.GeoMath;
 import de.blau.android.util.Offset;
+import de.blau.android.util.collections.LongHashSet;
 import de.blau.android.views.IMapView;
 import de.blau.android.views.overlay.OpenStreetMapOverlayTilesOverlay;
 import de.blau.android.views.overlay.OpenStreetMapTilesOverlay;
 import de.blau.android.views.overlay.OpenStreetMapViewOverlay;
-import de.blau.android.views.util.OpenStreetMapTileServer;
 
 /**
  * Paints all data provided previously by {@link Logic}.<br/>
@@ -107,7 +110,7 @@ public class Map extends View implements IMapView {
 	 * can be changed to contain additional overlays later.
 	 * @see #getOverlays()
 	 */
-	protected final List<OpenStreetMapViewOverlay> mOverlays = new ArrayList<OpenStreetMapViewOverlay>();
+	protected final List<OpenStreetMapViewOverlay> mOverlays = Collections.synchronizedList(new ArrayList<OpenStreetMapViewOverlay>());
 	
 	/**
 	 * The visible area in decimal-degree (WGS84) -space.
@@ -129,7 +132,12 @@ public class Map extends View implements IMapView {
 	/**
 	 * Stores icons that apply to a certain "thing". This can be e.g. a node or a SortedMap of tags.
 	 */
-	private final HashMap<Object, Bitmap> iconcache = new HashMap<Object, Bitmap>();
+	private final WeakHashMap<Object, Bitmap> iconcache = new WeakHashMap<Object, Bitmap>();
+	
+	/**
+	 * Stores strings that apply to a certain "thing". This can be e.g. a node or a SortedMap of tags.
+	 */
+	private final WeakHashMap<Object, String> labelcache = new WeakHashMap<Object, String>();
 	
 	/** Caches if the map is zoomed into edit range during one onDraw pass */
 	private boolean tmpDrawingInEditRange;
@@ -155,14 +163,24 @@ public class Map extends View implements IMapView {
 	
 	/** Caches the Paint used for node tolerance */
 	Paint nodeTolerancePaint;
+	Paint nodeTolerancePaint2;
 	
 	/** Caches the Paint used for way tolerance */
 	Paint wayTolerancePaint;
+	Paint wayTolerancePaint2;
 	
 	/** cached zoom level, calculated once per onDraw pass **/
 	int zoomLevel = 0;
 	
-	private ArrayList<Float> handles;
+	/** */
+	boolean inNodeIconZoomRange = false;
+	
+	/**
+	 * We just need one path object
+	 */
+	Path path = new Path();
+	
+	private LongHashSet handles;
 	
 	private Location displayLocation = null;
 	private boolean isFollowingGPS = false;
@@ -170,13 +188,6 @@ public class Map extends View implements IMapView {
 	private TrackerService tracker;
 	
 	private Paint textPaint = new Paint();
-	
-	// maximum number of nodes that can be on screen to allow edits
-	private long maxOnScreenNodes = 100; // arbitrary init value
-	// nodes that would fit in the not downloaded part of the screen
-	private long unusedNodeSpace = 0;
-	// current value
-	private long nodesOnScreenCount = 0;
 	
 	/**
 	 * support for display a crosshairs at a position
@@ -210,7 +221,7 @@ public class Map extends View implements IMapView {
 		setFocusableInTouchMode(true);
 		
 		//Style me
-		setBackgroundColor(getResources().getColor(R.color.ccc_white));
+		setBackgroundColor(ContextCompat.getColor(context,R.color.ccc_white));
 		setDrawingCacheEnabled(false);
 		//
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) { 
@@ -232,75 +243,91 @@ public class Map extends View implements IMapView {
 	public void createOverlays()
 	{
 		// create an overlay that displays pre-rendered tiles from the internet.
-		if (mOverlays.size() == 0) // only set once
-		{
-			if (prefs == null) // just to be safe
-				mOverlays.add(new OpenStreetMapTilesOverlay(this, OpenStreetMapTileServer.getDefault(getResources(), true), null));
-			else {
-				// mOverlays.add(new OpenStreetMapTilesOverlay(this, OpenStreetMapTileServer.get(getResources(), prefs.backgroundLayer(), true), null));
-				OpenStreetMapTilesOverlay osmto = new OpenStreetMapTilesOverlay(this, OpenStreetMapTileServer.get(Application.mainActivity, prefs.backgroundLayer(), true), null);
-				// Log.d("Map","background tile renderer " + osmto.getRendererInfo().toString());
-				mOverlays.add(osmto);
-				mOverlays.add(new OpenStreetMapOverlayTilesOverlay(this));
+		synchronized(mOverlays) {
+			if (mOverlays.size() == 0) // only set once
+			{
+				if (prefs == null) // just to be safe
+					mOverlays.add(new OpenStreetMapTilesOverlay(this, TileLayerServer.getDefault(getResources(), true), null));
+				else {
+					// mOverlays.add(new OpenStreetMapTilesOverlay(this, OpenStreetMapTileServer.get(getResources(), prefs.backgroundLayer(), true), null));
+					OpenStreetMapTilesOverlay osmto = new OpenStreetMapTilesOverlay(this, TileLayerServer.get(Application.mainActivity, prefs.backgroundLayer(), true), null);
+					// Log.d("Map","background tile renderer " + osmto.getRendererInfo().toString());
+					mOverlays.add(osmto);
+					mOverlays.add(new OpenStreetMapOverlayTilesOverlay(this));
+				}
+				mOverlays.add(new de.blau.android.tasks.MapOverlay(this, prefs.getServer()));
+				mOverlays.add(new de.blau.android.photos.MapOverlay(this, prefs.getServer()));
+				mOverlays.add(new de.blau.android.grid.MapOverlay(this, prefs.getServer()));
 			}
-			mOverlays.add(new de.blau.android.tasks.MapOverlay(this, prefs.getServer()));
-			mOverlays.add(new de.blau.android.photos.MapOverlay(this, prefs.getServer()));
-			mOverlays.add(new de.blau.android.grid.MapOverlay(this, prefs.getServer()));
 		}
 	}
 	
 	public OpenStreetMapTilesOverlay getOpenStreetMapTilesOverlay() {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if ((osmvo instanceof OpenStreetMapTilesOverlay) && !(osmvo instanceof OpenStreetMapOverlayTilesOverlay)) {
-				return (OpenStreetMapTilesOverlay)osmvo;
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if ((osmvo instanceof OpenStreetMapTilesOverlay) && !(osmvo instanceof OpenStreetMapOverlayTilesOverlay)) {
+					return (OpenStreetMapTilesOverlay)osmvo;
+				}
 			}
 		}
 		return null;
 	}
-	
+
 	/**
 	 * The names of these clases are patently silly and should be refactored
 	 * @return
 	 */
 	public OpenStreetMapOverlayTilesOverlay getOpenStreetMapOverlayTilesOverlay() {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo instanceof OpenStreetMapOverlayTilesOverlay) {
-				return (OpenStreetMapOverlayTilesOverlay)osmvo;
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo instanceof OpenStreetMapOverlayTilesOverlay) {
+					return (OpenStreetMapOverlayTilesOverlay)osmvo;
+				}
 			}
 		}
 		return null;
+
 	}
-	
+
 	public de.blau.android.tasks.MapOverlay getOpenStreetBugsOverlay() {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo instanceof de.blau.android.tasks.MapOverlay) {
-				return (de.blau.android.tasks.MapOverlay)osmvo;
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo instanceof de.blau.android.tasks.MapOverlay) {
+					return (de.blau.android.tasks.MapOverlay)osmvo;
+				}
 			}
 		}
 		return null;
 	}
-	
+
 	public de.blau.android.photos.MapOverlay getPhotosOverlay() {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo instanceof de.blau.android.photos.MapOverlay) {
-				return (de.blau.android.photos.MapOverlay)osmvo;
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo instanceof de.blau.android.photos.MapOverlay) {
+					return (de.blau.android.photos.MapOverlay)osmvo;
+				}
 			}
 		}
 		return null;
 	}
-	
+
 	public void onDestroy() {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			osmvo.onDestroy();
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				osmvo.onDestroy();
+			}
 		}
 		tracker = null;
 		iconcache.clear();
+		labelcache.clear();
 		tmpPresets = null;
 	}
 	
 	public void onLowMemory() {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			osmvo.onLowMemory();
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				osmvo.onLowMemory();
+			}
 		}
 	}
 	
@@ -315,21 +342,27 @@ public class Map extends View implements IMapView {
 		zoomLevel = calcZoomLevel(canvas);
 		
 		// set in paintOsmData now tmpDrawingInEditRange = Main.logic.isInEditZoomRange();
-		tmpDrawingEditMode = Main.getLogic().getMode();
-		tmpDrawingSelectedNodes = Main.getLogic().getSelectedNodes();
-		tmpDrawingSelectedWays = Main.getLogic().getSelectedWays();
-		tmpClickableElements = Main.getLogic().getClickableElements();
-		tmpDrawingSelectedRelationWays = Main.getLogic().getSelectedRelationWays();
-		tmpDrawingSelectedRelationNodes = Main.getLogic().getSelectedRelationNodes();
+		final Logic logic = Application.getLogic();
+		tmpDrawingEditMode = logic.getMode();
+		tmpDrawingSelectedNodes = logic.getSelectedNodes();
+		tmpDrawingSelectedWays = logic.getSelectedWays();
+		tmpClickableElements = logic.getClickableElements();
+		tmpDrawingSelectedRelationWays = logic.getSelectedRelationWays();
+		tmpDrawingSelectedRelationNodes = logic.getSelectedRelationNodes();
 		tmpPresets = Application.getCurrentPresets(Application.mainActivity);
-		handles = null;
+		
+		inNodeIconZoomRange = zoomLevel > SHOW_ICONS_LIMIT;
+		
+		// handles = null; this forces creation of a new object, simply clear it in paintHandles after use
 		
 		// Draw our Overlays.
 		canvas.getClipBounds(canvasBounds);
 		OpenStreetMapTilesOverlay.resetAttributionArea(canvasBounds, 0);
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (!(osmvo instanceof de.blau.android.tasks.MapOverlay)) {
-				osmvo.onManagedDraw(canvas, this);
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) { 
+				if (!(osmvo instanceof de.blau.android.tasks.MapOverlay)) {
+					osmvo.onManagedDraw(canvas, this);
+				}
 			}
 		}
 		
@@ -339,8 +372,10 @@ public class Map extends View implements IMapView {
 		getOpenStreetBugsOverlay().onManagedDraw(canvas, this); // draw bugs on top of data
 		
 		if (zoomLevel > 10) {
-			if (tmpDrawingEditMode != Mode.MODE_ALIGN_BACKGROUND)
-				paintStorageBox(canvas, new ArrayList<BoundingBox>(delegator.getBoundingBoxes())); // shallow copy to avoid modiciaftion issues
+			if (tmpDrawingEditMode != Mode.MODE_ALIGN_BACKGROUND) {
+				// shallow copy to avoid modification issues FIXME this likely simply needs a synchronized statement in paintStorageBox
+				paintStorageBox(canvas, new ArrayList<BoundingBox>(delegator.getBoundingBoxes())); 
+			}
 			paintGpsTrack(canvas);
 		}
 		paintGpsPos(canvas);
@@ -374,34 +409,51 @@ public class Map extends View implements IMapView {
 	
 	@Override
 	public boolean onTouchEvent(MotionEvent event) {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo.onTouchEvent(event, this)) {
-				return true;
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo.onTouchEvent(event, this)) {
+					return true;
+				}
 			}
 		}
 		return super.onTouchEvent(event);
 	}
-	
+
 	@Override
 	public boolean onKeyDown(int keyCode, KeyEvent event) {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo.onKeyDown(keyCode, event, this)) {
-				return true;
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo.onKeyDown(keyCode, event, this)) {
+					return true;
+				}
 			}
 		}
 		return super.onKeyDown(keyCode, event);
 	}
-	
+
 	@Override
 	public boolean onKeyUp(int keyCode, KeyEvent event) {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo.onKeyUp(keyCode, event, this)) {
-				return true;
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo.onKeyUp(keyCode, event, this)) {
+					return true;
+				}
 			}
 		}
 		return super.onKeyUp(keyCode, event);
 	}
 	
+	@Override
+	public boolean onTrackballEvent(MotionEvent event) {
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo.onTrackballEvent(event, this)) {
+					return true;
+				}
+			}
+		}
+		return super.onTrackballEvent(event);
+	}
 	
 	/**
 	 * As of Android 4.0.4, clipping with Op.DIFFERENCE is not supported if hardware acceleration is used.
@@ -439,24 +491,14 @@ public class Map extends View implements IMapView {
 		return false;
 	}
 	
-	
-	@Override
-	public boolean onTrackballEvent(MotionEvent event) {
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo.onTrackballEvent(event, this)) {
-				return true;
-			}
-		}
-		return super.onTrackballEvent(event);
-	}
-	
+
 	private void paintCrosshairs(Canvas canvas) {
 		// 
 		if (showCrosshairs) {
-			Paint paint = Profile.getCurrent(Profile.CROSSHAIRS).getPaint();
+			Paint paint = DataStyle.getCurrent(DataStyle.CROSSHAIRS).getPaint();
 			canvas.save();
 			canvas.translate(GeoMath.lonE7ToX(getWidth(), getViewBox(), crosshairsLon), GeoMath.latE7ToY(getHeight(), getWidth(), getViewBox(),crosshairsLat));
-			canvas.drawPath(Profile.getCurrent().crosshairs_path, paint);
+			canvas.drawPath(DataStyle.getCurrent().crosshairs_path, paint);
 			canvas.restore();
 		}
 	}
@@ -464,7 +506,7 @@ public class Map extends View implements IMapView {
 	private void paintGpsTrack(final Canvas canvas) {
 		if (tracker == null) return;
 		float[] linePoints = pointListToLinePointsArray(tracker.getTrackPoints());
-		canvas.drawLines(linePoints, Profile.getCurrent(Profile.GPS_TRACK).getPaint());
+		canvas.drawLines(linePoints, DataStyle.getCurrent(DataStyle.GPS_TRACK).getPaint());
 	}
 	
 	/**
@@ -489,9 +531,9 @@ public class Map extends View implements IMapView {
 		}
 		Paint paint = null;
 		if (isFollowingGPS) {
-			paint = Profile.getCurrent(Profile.GPS_POS_FOLLOW).getPaint();
+			paint = DataStyle.getCurrent(DataStyle.GPS_POS_FOLLOW).getPaint();
 		} else {
-			paint = Profile.getCurrent(Profile.GPS_POS).getPaint();
+			paint = DataStyle.getCurrent(DataStyle.GPS_POS).getPaint();
 		}
 	
 		if (o < 0) {
@@ -502,21 +544,21 @@ public class Map extends View implements IMapView {
 			canvas.save();
 			canvas.translate(x, y);
 			canvas.rotate(o);
-			canvas.drawPath(Profile.getCurrent().orientation_path, paint);
+			canvas.drawPath(DataStyle.getCurrent().orientation_path, paint);
 			canvas.restore();
 		}
 		if (displayLocation.hasAccuracy()) {
 			// FIXME this assumes square pixels
 			float accuracyInPixels = (float) (GeoMath.convertMetersToGeoDistance(displayLocation.getAccuracy())*((double)getWidth()/(viewBox.getWidth()/1E7D)));
 			RectF accuracyRect = new RectF(x-accuracyInPixels,y+accuracyInPixels,x+accuracyInPixels,y-accuracyInPixels);
-			canvas.drawOval(accuracyRect, Profile.getCurrent(Profile.GPS_ACCURACY).getPaint());	
+			canvas.drawOval(accuracyRect, DataStyle.getCurrent(DataStyle.GPS_ACCURACY).getPaint());	
 		}
 	}
 	
 	private void paintStats(final Canvas canvas, final int fps) {
 		int pos = 1;
 		String text = "";
-		Paint infotextPaint = Profile.getCurrent(Profile.INFOTEXT).getPaint();
+		Paint infotextPaint = DataStyle.getCurrent(DataStyle.INFOTEXT).getPaint();
 		float textSize = infotextPaint.getTextSize();
 		
 		BoundingBox viewBox = getViewBox();
@@ -545,7 +587,7 @@ public class Map extends View implements IMapView {
 	private void paintZoomAndOffset(final Canvas canvas) {
 		int pos = Application.mainActivity.getSupportActionBar().getHeight() + 5; 
 		Offset o = getOpenStreetMapTilesOverlay().getRendererInfo().getOffset(zoomLevel);
-		String text = "Z " + zoomLevel + " Offset " +  (o != null ? String.format("%.5f",o.lon) + "/" +  String.format("%.5f",o.lat) : "0.00000/0.00000");
+		String text = "Z " + zoomLevel + " Offset " +  (o != null ? String.format(Locale.US,"%.5f",o.lon) + "/" +  String.format(Locale.US,"%.5f",o.lat) : "0.00000/0.00000");
 		float textSize = textPaint.getTextSize();
 		canvas.drawText(text, 5, pos + textSize, textPaint);
 	}
@@ -557,16 +599,9 @@ public class Map extends View implements IMapView {
 	 */
 	private void paintOsmData(final Canvas canvas) {
 		// first find all nodes that we need to display (for density calculations)
-		List<Node> nodes = delegator.getCurrentStorage().getNodes();
-		ArrayList<Node> paintNodes = new ArrayList<Node>(); 
-		BoundingBox viewBox = getViewBox();
-		nodesOnScreenCount = 0;
-		for (Node n:nodes) {
-			if (viewBox.isIn(n.getLat(), n.getLon())) {
-				paintNodes.add(n);
-				nodesOnScreenCount++;
-			}
-		}
+
+		List<Node> paintNodes = delegator.getCurrentStorage().getNodes(getViewBox()); 
+		
 		// the following should guarantee that if the selected node is off screen but the handle not, the handle gets drawn
 		// note this isn't perfect because touch areas of other nodes just outside the screen still won't get drawn
 		// TODO check if we can't avoid searching paintNodes multiple times
@@ -578,22 +613,8 @@ public class Map extends View implements IMapView {
 			}
 		}
 		
-// TODO code is currently disabled because it is not quite satisfactory
-//		// calculate how much of the screen is actually not covered by downloads and can be ignored
-//		unusedNodeSpace = 0;
-//		ArrayList<BoundingBox> emptyBoxes;
-//		try {
-//			double mHeight = GeoMath.latE7ToMercatorE7(viewBox.getTop()) - viewBox.getBottomMercator();
-//			emptyBoxes = BoundingBox.newBoxes((ArrayList<BoundingBox>) delegator.getBoundingBoxes(), new BoundingBox(viewBox));
-//			for (BoundingBox b: emptyBoxes) {
-//				unusedNodeSpace = unusedNodeSpace + Math.round(maxOnScreenNodes*(b.getWidth()*(GeoMath.latE7ToMercatorE7(b.getTop()) - b.getBottomMercator())/(double)(viewBox.getWidth()*mHeight)));
-//			}
-//		} catch (OsmException e) {
-//			// TODO Auto-generated catch block
-//			e.printStackTrace();
-//		} 
 		// 
-		tmpDrawingInEditRange = Main.getLogic().isInEditZoomRange(); // do this after density calc
+		tmpDrawingInEditRange = Application.getLogic().isInEditZoomRange(); // do this after density calc
 		
 		//Paint all ways
 		List<Way> ways = delegator.getCurrentStorage().getWays();
@@ -620,42 +641,43 @@ public class Map extends View implements IMapView {
 	}
 
 	private void paintStorageBox(final Canvas canvas, List<BoundingBox> list) {
-		
-		Canvas c = canvas;
-		Bitmap b = null;
-		// Clipping with Op.DIFFERENCE is not supported when a device uses hardware acceleration
-		// drawing to a bitmap however will currently not be accelerated
-		if (!hasFullClippingSupport(canvas)) {
-			b = Bitmap.createBitmap(getWidth(), getHeight(), Bitmap.Config.ARGB_8888);
-			c = new Canvas(b);
-		} else {
-			c.save();
-		}
-		int screenWidth = getWidth();
-		int screenHeight = getHeight();
-		BoundingBox viewBox = getViewBox();
-		Path path = new Path();
-		RectF screen = new RectF(0, 0, getWidth(), getHeight());
-		for (BoundingBox bb:list) {
-			if (viewBox.intersects(bb)) { // only need to do this if we are on screen
-				float left = GeoMath.lonE7ToX(screenWidth, viewBox, bb.getLeft());
-				float right = GeoMath.lonE7ToX(screenWidth, viewBox, bb.getRight());
-				float bottom = GeoMath.latE7ToY(screenHeight, screenWidth, viewBox , bb.getBottom());
-				float top = GeoMath.latE7ToY(screenHeight, screenWidth, viewBox, bb.getTop());
-				RectF rect = new RectF(left, top, right, bottom);
-				rect.intersect(screen);
-				path.addRect(rect, Path.Direction.CW);
+		if (tmpDrawingEditMode != Mode.MODE_MOVE) {
+			Canvas c = canvas;
+			Bitmap b = null;
+			// Clipping with Op.DIFFERENCE is not supported when a device uses hardware acceleration
+			// drawing to a bitmap however will currently not be accelerated
+			if (!hasFullClippingSupport(canvas)) {
+				b = Bitmap.createBitmap(getWidth(), getHeight(), Bitmap.Config.ARGB_8888);
+				c = new Canvas(b);
+			} else {
+				c.save();
 			}
-		}
-	
-		Paint boxpaint = Profile.getCurrent(Profile.VIEWBOX).getPaint();
-		c.clipPath(path, Region.Op.DIFFERENCE);
-		c.drawRect(screen, boxpaint);
-			
-		if (!hasFullClippingSupport(canvas)) {
-			canvas.drawBitmap(b, 0, 0, null);
-		} else {
-			c.restore();
+			int screenWidth = getWidth();
+			int screenHeight = getHeight();
+			BoundingBox viewBox = getViewBox();
+			path.reset();
+			RectF screen = new RectF(0, 0, getWidth(), getHeight());
+			for (BoundingBox bb:list) {
+				if (viewBox.intersects(bb)) { // only need to do this if we are on screen
+					float left = GeoMath.lonE7ToX(screenWidth, viewBox, bb.getLeft());
+					float right = GeoMath.lonE7ToX(screenWidth, viewBox, bb.getRight());
+					float bottom = GeoMath.latE7ToY(screenHeight, screenWidth, viewBox , bb.getBottom());
+					float top = GeoMath.latE7ToY(screenHeight, screenWidth, viewBox, bb.getTop());
+					RectF rect = new RectF(left, top, right, bottom);
+					rect.intersect(screen);
+					path.addRect(rect, Path.Direction.CW);
+				}
+			}
+
+			Paint boxpaint = DataStyle.getCurrent(DataStyle.VIEWBOX).getPaint();
+			c.clipPath(path, Region.Op.DIFFERENCE);
+			c.drawRect(screen, boxpaint);
+
+			if (!hasFullClippingSupport(canvas)) {
+				canvas.drawBitmap(b, 0, 0, null);
+			} else {
+				c.restore();
+			}
 		}
 	}
 	
@@ -670,85 +692,135 @@ public class Map extends View implements IMapView {
 		int lat = node.getLat();
 		int lon = node.getLon();
 		boolean isSelected = false;
-		
-		//Paint only nodes inside the viewBox.
+
 		BoundingBox viewBox = getViewBox();
-//		if (viewBox.isIn(lat, lon)) { // we are only passed nodes that are in the viewBox
-			float x = GeoMath.lonE7ToX(getWidth(), viewBox, lon);
-			float y = GeoMath.latE7ToY(getHeight(), getWidth(), viewBox, lat);
+		float x = GeoMath.lonE7ToX(getWidth(), viewBox, lon);
+		float y = GeoMath.latE7ToY(getHeight(), getWidth(), viewBox, lat);
 
-			boolean isTagged = node.isTagged();
-			
-			//draw tolerance box
-			if (tmpDrawingInEditRange
-					&& (prefs.isToleranceVisible() || (tmpClickableElements != null && tmpClickableElements.contains(node)))
-					&& (tmpClickableElements == null || tmpClickableElements.contains(node))
-				)
-			{
+		boolean isTagged = node.isTagged();
+
+		//draw tolerance
+		if (tmpDrawingInEditRange) {
+			if (prefs.isToleranceVisible() && tmpClickableElements == null) {
 				drawNodeTolerance(canvas, node.getState(), lat, lon, isTagged, x, y);
+			} else if (tmpClickableElements != null && tmpClickableElements.contains(node)) {
+				drawNodeTolerance2(canvas, node.getState(), lat, lon, isTagged, x, y);
 			}
-			
-			String featureKey;
-			String featureKeyThin;
-			String featureKeyTagged;
-			if (tmpDrawingSelectedNodes != null && tmpDrawingSelectedNodes.contains(node) && tmpDrawingInEditRange) {
-				// general node style
-				featureKey = Profile.SELECTED_NODE;
-				// style for house numbers
-				featureKeyThin = Profile.SELECTED_NODE_THIN;
-				// style for tagged nodes or otherwise important
-				featureKeyTagged = Profile.SELECTED_NODE_TAGGED;
-				if (tmpDrawingSelectedNodes.size() == 1 && tmpDrawingSelectedWays == null && prefs.largeDragArea()) { // don't draw large areas in multi-select mode
-					canvas.drawCircle(x, y, Profile.getCurrent().largDragToleranceRadius, Profile.getCurrent(Profile.NODE_DRAG_RADIUS).getPaint());
-				}
-				isSelected = true;
-			} else if ((tmpDrawingSelectedRelationNodes != null && tmpDrawingSelectedRelationNodes.contains(node)) && tmpDrawingInEditRange) {
-				// general node style
-				featureKey = Profile.SELECTED_RELATION_NODE;
-				// style for house numbers
-				featureKeyThin = Profile.SELECTED_RELATION_NODE_THIN;
-				// style for tagged nodes or otherwise important
-				featureKeyTagged = Profile.SELECTED_RELATION_NODE_TAGGED;
-				isSelected = true;
-			} else if (node.hasProblem(context)) {
-				// general node style
-				featureKey = Profile.PROBLEM_NODE;
-				// style for house numbers
-				featureKeyThin = Profile.PROBLEM_NODE_THIN;
-				// style for tagged nodes or otherwise important
-				featureKeyTagged = Profile.PROBLEM_NODE_TAGGED;
-			} else {
-				// general node style
-				featureKey = Profile.NODE;
-				// style for house numbers
-				featureKeyThin = Profile.NODE_THIN;
-				// style for tagged nodes or otherwise important
-				featureKeyTagged = Profile.NODE_TAGGED;
-			}
+		}
 
-			boolean noIcon = true;
-			if (isTagged && zoomLevel > SHOW_ICONS_LIMIT && showIcons) {
-				noIcon = tmpPresets == null || !paintNodeIcon(node, canvas, x, y, isSelected ? featureKeyTagged : null);
-				if (noIcon) {
-					String houseNumber = node.getTagWithKey(Tags.KEY_ADDR_HOUSENUMBER);
-					if (houseNumber != null && houseNumber.trim().length() > 0) { // draw house-numbers
-						Paint paint2 = Profile.getCurrent(featureKeyThin).getPaint();
-						canvas.drawCircle(x, y, houseNumberRadius, paint2);
-						canvas.drawText(houseNumber, x - (paint2.measureText(houseNumber) / 2), y + verticalNumberOffset, paint2); 
-						noIcon = false;
-					}
-				} 
+		String featureKey;
+		String featureKeyThin;
+		String featureKeyTagged;
+		if (tmpDrawingSelectedNodes != null && tmpDrawingSelectedNodes.contains(node) && tmpDrawingInEditRange) {
+			// general node style
+			featureKey = DataStyle.SELECTED_NODE;
+			// style for house numbers
+			featureKeyThin = DataStyle.SELECTED_NODE_THIN;
+			// style for tagged nodes or otherwise important
+			featureKeyTagged = DataStyle.SELECTED_NODE_TAGGED;
+			if (tmpDrawingSelectedNodes.size() == 1 && tmpDrawingSelectedWays == null && prefs.largeDragArea()) { // don't draw large areas in multi-select mode
+				canvas.drawCircle(x, y, DataStyle.getCurrent().largDragToleranceRadius, DataStyle.getCurrent(DataStyle.NODE_DRAG_RADIUS).getPaint());
 			}
-			if (noIcon) { 
-				// draw regular nodes
-				Paint p = Profile.getCurrent(featureKey).getPaint();
-				if (hwAccelarationWorkaround) { //FIXME we don't actually know if this is slower than drawPoint
-					canvas.drawCircle(x, y, p.getStrokeWidth()/2, p);
-				} else {
-					canvas.drawPoint(x, y, p);
+			isSelected = true;
+		} else if ((tmpDrawingSelectedRelationNodes != null && tmpDrawingSelectedRelationNodes.contains(node)) && tmpDrawingInEditRange) {
+			// general node style
+			featureKey = DataStyle.SELECTED_RELATION_NODE;
+			// style for house numbers
+			featureKeyThin = DataStyle.SELECTED_RELATION_NODE_THIN;
+			// style for tagged nodes or otherwise important
+			featureKeyTagged = DataStyle.SELECTED_RELATION_NODE_TAGGED;
+			isSelected = true;
+		} else if (node.hasProblem(context)) {
+			// general node style
+			featureKey = DataStyle.PROBLEM_NODE;
+			// style for house numbers
+			featureKeyThin = DataStyle.PROBLEM_NODE_THIN;
+			// style for tagged nodes or otherwise important
+			featureKeyTagged = DataStyle.PROBLEM_NODE_TAGGED;
+		} else {
+			// general node style
+			featureKey = DataStyle.NODE;
+			// style for house numbers
+			featureKeyThin = DataStyle.NODE_THIN;
+			// style for tagged nodes or otherwise important
+			featureKeyTagged = DataStyle.NODE_TAGGED;
+		}
+
+		boolean noIcon = true;
+		boolean isTaggedAndInZoomLimit = isTagged && inNodeIconZoomRange;
+		if (isTaggedAndInZoomLimit && showIcons) {
+			noIcon = tmpPresets == null || !paintNodeIcon(node, canvas, x, y, isSelected ? featureKeyTagged : null);
+			if (noIcon) {
+				String houseNumber = node.getTagWithKey(Tags.KEY_ADDR_HOUSENUMBER);
+				if (houseNumber != null && !"".equals(houseNumber)) { // draw house-numbers
+					paintHouseNumber(x,y,canvas,featureKeyThin,houseNumber);
+					return;
 				}
+			} 
+		}
+		if (noIcon) { 
+			// draw regular nodes or without icons
+			Paint p = DataStyle.getCurrent(isTagged ? featureKeyTagged : featureKey).getPaint();
+			float strokeWidth = p.getStrokeWidth();
+			if (hwAccelarationWorkaround) { //FIXME we don't actually know if this is slower than drawPoint
+				canvas.drawCircle(x, y, strokeWidth/2, p);
+			} else {
+				canvas.drawPoint(x, y, p);
 			}
-//		}
+			if (isTaggedAndInZoomLimit) {
+				paintNodeLabel(x, y, canvas, featureKeyThin, strokeWidth, node);
+			}
+		}
+	}
+	
+	/**
+	 * Draw a circle with center at x,y with the house number in it
+	 * @param x
+	 * @param y
+	 * @param canvas
+	 * @param featureKeyThin
+	 * @param houseNumber
+	 */
+	void paintHouseNumber(final float x, final float y, final Canvas canvas, final String featureKeyThin, final String houseNumber) {
+		Paint paint2 = DataStyle.getCurrent(featureKeyThin).getPaint();
+		canvas.drawCircle(x, y, houseNumberRadius, paint2);
+		canvas.drawText(houseNumber, x - (paint2.measureText(houseNumber) / 2), y + verticalNumberOffset, paint2); 
+	}
+	
+	/**
+	 * Praint a label under the node, does not try to do collision avoidance
+	 * @param x
+	 * @param y
+	 * @param canvas
+	 * @param featureKeyThin
+	 * @param strokeWidth
+	 * @param node
+	 */
+	void paintNodeLabel(final float x, final float y, final Canvas canvas, final String featureKeyThin, final float strokeWidth, final Node node) {
+		Paint paint2 = DataStyle.getCurrent(featureKeyThin).getPaint();
+		SortedMap<String, String> tags = node.getTags();
+		String label = labelcache.get(tags); // may be null!
+		if (label == null) {
+			if (!labelcache.containsKey(tags)) {
+				label = node.getTagWithKey(Tags.KEY_NAME);
+				if (label == null && tmpPresets != null) { 
+					PresetItem match = Preset.findBestMatch(tmpPresets,node.getTags());
+					if (match != null) {
+						label = match.getTranslatedName();
+					} else {
+						label  = node.getPrimaryTag();
+						// if label is still null, leave it as is
+					}
+				}
+				labelcache.put(tags,label);
+				if (label==null) {
+					return;
+				}
+			} else {
+				return;
+			}
+		}
+		canvas.drawText(label, x - (paint2.measureText(label) / 2), y + strokeWidth + 2*verticalNumberOffset, paint2);
 	}
 	
 	/**
@@ -758,11 +830,13 @@ public class Map extends View implements IMapView {
 	 * @return icon or null if none is found
 	 */
 	Bitmap getIcon(OsmElement element) {
-		Bitmap icon = null;
 		SortedMap<String, String> tags = element.getTags();
-		if (iconcache.containsKey(tags)) {
-			icon = iconcache.get(tags); // may be null!
-		} else if (tmpPresets != null) {
+		Bitmap icon = iconcache.get(tags); // may be null!
+		if (icon == null && tmpPresets != null) {
+			if (iconcache.containsKey(tags)) {
+				// no point in trying to match
+				return icon;
+			}
 			// icon not cached, ask the preset, render to a bitmap and cache result
 			PresetItem match = null;
 			if (element instanceof Way) { 
@@ -774,10 +848,13 @@ public class Map extends View implements IMapView {
 			} else {
 				match = Preset.findBestMatch(tmpPresets,tags);
 			}
-			if (match != null && match.getMapIcon() != null) {
-				icon = Bitmap.createBitmap(iconRadius*2, iconRadius*2, Config.ARGB_8888);
-				// icon.eraseColor(Color.WHITE); // replace nothing with white?
-				match.getMapIcon().draw(new Canvas(icon));
+			if (match != null) {
+				Drawable iconDrawable = match.getMapIcon();
+				if (iconDrawable != null) {
+					icon = Bitmap.createBitmap(iconRadius*2, iconRadius*2, Config.ARGB_8888);
+					// icon.eraseColor(Color.WHITE); // replace nothing with white?
+					iconDrawable.draw(new Canvas(icon));
+				}
 			}
 			iconcache.put(tags, icon);
 		}
@@ -798,7 +875,7 @@ public class Map extends View implements IMapView {
 			float h2 = icon.getHeight()/2f;
 			if (featureKey != null) { // selected
 				RectF r = new RectF(x - w2 - iconSelectedBorder, y - h2 - iconSelectedBorder, x + w2 + iconSelectedBorder, y + h2 + iconSelectedBorder);
-				canvas.drawRoundRect(r, iconSelectedBorder, iconSelectedBorder, Profile.getCurrent(featureKey).getPaint());
+				canvas.drawRoundRect(r, iconSelectedBorder, iconSelectedBorder, DataStyle.getCurrent(featureKey).getPaint());
 			}
 			// we have an icon! draw it.
 			canvas.drawBitmap(icon, x - w2, y - h2, null);
@@ -823,6 +900,14 @@ public class Map extends View implements IMapView {
 			canvas.drawCircle(x, y, isTagged ? nodeTolerancePaint.getStrokeWidth() : wayTolerancePaint.getStrokeWidth()/2, nodeTolerancePaint);
 		}
 	}
+	
+	private void drawNodeTolerance2(final Canvas canvas, final Byte nodeState, final int lat, final int lon,
+			boolean isTagged, final float x, final float y) {
+		if ( (tmpDrawingEditMode != Logic.Mode.MODE_MOVE && tmpDrawingEditMode != Logic.Mode.MODE_ALIGN_BACKGROUND)
+				&& (nodeState != OsmElement.STATE_UNCHANGED || delegator.isInDownload(lat, lon))) {
+			canvas.drawCircle(x, y, isTagged ? nodeTolerancePaint2.getStrokeWidth() : wayTolerancePaint2.getStrokeWidth()/2, nodeTolerancePaint2);
+		}
+	}
 
 	/**
 	 * Paints the given way on the canvas.
@@ -835,11 +920,13 @@ public class Map extends View implements IMapView {
 		Paint paint;
 		//draw way tolerance
 		if (tmpDrawingInEditRange // if we are not in editing rage none of the further checks are necessary
-				&& (prefs.isToleranceVisible() || (tmpClickableElements != null && tmpClickableElements.contains(way))) // if prefs are turned off but we are doing an EasyEdit operation show anyway
-				&& (tmpClickableElements == null || tmpClickableElements.contains(way))
-				&& (tmpDrawingEditMode == Logic.Mode.MODE_TAG_EDIT
-					|| tmpDrawingEditMode == Logic.Mode.MODE_EASYEDIT)) {
-			canvas.drawLines(linePoints, wayTolerancePaint);
+			&& (tmpDrawingEditMode == Logic.Mode.MODE_TAG_EDIT
+			|| tmpDrawingEditMode == Logic.Mode.MODE_EASYEDIT)) {
+				if (prefs.isToleranceVisible() && tmpClickableElements == null) {
+					canvas.drawLines(linePoints, wayTolerancePaint);
+				} else if (tmpClickableElements != null && tmpClickableElements.contains(way)) {
+					canvas.drawLines(linePoints, wayTolerancePaint2);
+				}
 		}
 		//draw selectedWay highlighting
 		boolean isSelected = tmpDrawingInEditRange // if we are not in editing range don't show selected way ... may be a better idea to do so
@@ -848,44 +935,44 @@ public class Map extends View implements IMapView {
 				&& tmpDrawingSelectedRelationWays != null && tmpDrawingSelectedRelationWays.contains(way);		
 				
 		if  (isSelected) {
-			paint = Profile.getCurrent(Profile.SELECTED_WAY).getPaint();
+			paint = DataStyle.getCurrent(DataStyle.SELECTED_WAY).getPaint();
 			canvas.drawLines(linePoints, paint);
-			paint = Profile.getCurrent(Profile.WAY_DIRECTION).getPaint();
+			paint = DataStyle.getCurrent(DataStyle.WAY_DIRECTION).getPaint();
 			drawOnewayArrows(canvas, linePoints, false, paint);
 		} else if (isMemberOfSelectedRelation) {
-			paint = Profile.getCurrent(Profile.SELECTED_RELATION_WAY).getPaint();
+			paint = DataStyle.getCurrent(DataStyle.SELECTED_RELATION_WAY).getPaint();
 			canvas.drawLines(linePoints, paint);
-			paint = Profile.getCurrent(Profile.WAY_DIRECTION).getPaint();
+			paint = DataStyle.getCurrent(DataStyle.WAY_DIRECTION).getPaint();
 			drawOnewayArrows(canvas, linePoints, false, paint);
 		}
 
 		int onewayCode = way.getOneway();
 		if (onewayCode != 0) {
-			FeatureProfile fp = Profile.getCurrent(Profile.ONEWAY_DIRECTION);
+			FeatureStyle fp = DataStyle.getCurrent(DataStyle.ONEWAY_DIRECTION);
 			drawOnewayArrows(canvas, linePoints, (onewayCode == -1), fp.getPaint());
 		} else if (way.getTagWithKey(Tags.KEY_WATERWAY) != null) { // waterways flow in the way direction
-			FeatureProfile fp = Profile.getCurrent(Profile.ONEWAY_DIRECTION);
+			FeatureStyle fp = DataStyle.getCurrent(DataStyle.ONEWAY_DIRECTION);
 			drawOnewayArrows(canvas, linePoints, false, fp.getPaint());
 		}
 		
 		// 
-		FeatureProfile fp; // no need to get the default here
+		FeatureStyle fp; // no need to get the default here
 		
 		// this logic needs to be separated out
 		if (way.hasProblem(context)) {
-			fp = Profile.getCurrent(Profile.PROBLEM_WAY);
+			fp = DataStyle.getCurrent(DataStyle.PROBLEM_WAY);
 		} else {
-			FeatureProfile wayFp = way.getFeatureProfile();
+			FeatureStyle wayFp = way.getFeatureProfile();
 			if (wayFp == null) {
-				fp = Profile.getCurrent(Profile.WAY); // default for ways
+				fp = DataStyle.getCurrent(DataStyle.WAY); // default for ways
 				// three levels of hierarchy for roads and special casing of tracks, two levels for everything else
 				String highwayType = way.getTagWithKey(Tags.KEY_HIGHWAY);
 				if (highwayType != null) {
-					FeatureProfile tempFp = Profile.getCurrent("way-highway");
+					FeatureStyle tempFp = DataStyle.getCurrent("way-highway");
 					if (tempFp != null) {
 						fp = tempFp;
 					}
-					tempFp = Profile.getCurrent("way-highway-" + highwayType);
+					tempFp = DataStyle.getCurrent("way-highway-" + highwayType);
 					if (tempFp != null) {
 						fp = tempFp;
 					}
@@ -896,7 +983,7 @@ public class Map extends View implements IMapView {
 						highwaySubType = way.getTagWithKey(highwayType);
 					}
 					if (highwaySubType != null) {
-						tempFp = Profile.getCurrent("way-highway-" + highwayType + "-" + highwaySubType);
+						tempFp = DataStyle.getCurrent("way-highway-" + highwayType + "-" + highwaySubType);
 						if (tempFp != null) {
 							fp = tempFp;
 						}
@@ -905,7 +992,7 @@ public class Map extends View implements IMapView {
 					// order in the array defines precedence
 					String[] tags = {"building","railway","leisure","landuse","waterway","natural","addr:interpolation","boundary","amenity","shop","power",
 							"aerialway","military","historic"};
-					FeatureProfile tempFp = null;
+					FeatureStyle tempFp = null;
 					for (String tag:tags) {
 						tempFp = getProfile(tag, way);
 						if (tempFp != null) {
@@ -942,7 +1029,7 @@ public class Map extends View implements IMapView {
 		// draw the way itself
 		// canvas.drawLines(linePoints, fp.getPaint()); doesn't work properly with HW acceleration
 		if (linePoints.length > 2) {
-			Path path = new Path();
+			path.reset();
 			for (int i=0;i<(linePoints.length);i=i+4) {
 				path.moveTo(linePoints[i], linePoints[i+1]);
 				path.lineTo(linePoints[i+2], linePoints[i+3]);
@@ -950,24 +1037,25 @@ public class Map extends View implements IMapView {
 			canvas.drawPath(path, fp.getPaint());
 		}
 		
-		if (tmpDrawingSelectedWays == null) { // the handles only work when no way is selecetd so don't show them
+		if (tmpDrawingSelectedWays == null 
+				&& tmpDrawingSelectedRelationWays == null
+				&& tmpDrawingSelectedRelationNodes == null
+				&& tmpDrawingEditMode == Logic.Mode.MODE_EASYEDIT) { // the handles only work when no way is selected so don't show them
 			// add "geometry improvement" handles
 			for (int i = 2; i < linePoints.length; i=i+4) {
 				float x0 = linePoints[i-2];
 				float y0 = linePoints[i-1];
 				float xDelta = linePoints[i] - x0;
 				float yDelta = linePoints[i+1] - y0;
-				
 				double len = Math.hypot(xDelta,yDelta);
-				if (len > Profile.getCurrent().minLenForHandle) {
-					if (handles == null) handles =new ArrayList<Float>();
-					handles.add(x0 + xDelta/2);
-					handles.add(y0 + yDelta/2);
+				if (len > DataStyle.getCurrent().minLenForHandle) {
+					if (handles == null) handles = new LongHashSet();
+					handles.put(((long)(Float.floatToRawIntBits(x0 + xDelta/2)) <<32) + (long)Float.floatToRawIntBits(y0 + yDelta/2));
 				}
 			}
 		}
 		
-		if (showIcons && showWayIcons && way.isClosed()) {
+		if (showIcons && showWayIcons && zoomLevel > SHOW_ICONS_LIMIT && way.isClosed()) {
 			int vs = linePoints.length;
 			if (vs < way.nodeCount()*2) {
 				return;
@@ -987,41 +1075,49 @@ public class Map extends View implements IMapView {
 			}
 			Y = Y/(3*A);
 			X = X/(3*A);
-			paintNodeIcon(way, canvas, (float)X, (float)Y, isSelected?Profile.SELECTED_NODE_TAGGED:null);
+			if (tmpPresets == null || !paintNodeIcon(way, canvas, (float)X, (float)Y, isSelected?DataStyle.SELECTED_NODE_TAGGED:null)) {
+				String houseNumber = way.getTagWithKey(Tags.KEY_ADDR_HOUSENUMBER);
+				if (houseNumber != null && !"".equals(houseNumber)) { // draw house-numbers
+					paintHouseNumber((float)X,(float)Y,canvas,isSelected?DataStyle.SELECTED_NODE_THIN:DataStyle.NODE_THIN,houseNumber);
+					return;
+				}
+			}
 		}
 	}
-	
 
 	void paintHandles(Canvas canvas) {
-		if (handles != null) {
+		if (handles != null && handles.size() > 0) {
 			canvas.save();
 			float lastX = 0;
 			float lastY = 0;
-			for (int i = 0; i < handles.size(); i=i+2) {
+			for (long l:handles.values()) {
+
 				// draw handle
 				// canvas.drawCircle(x0 + xDelta/2, y0 + yDelta/2, 5, Profile.getCurrent(Profile.HANDLE).getPaint());
 				// canvas.drawPoint(x0 + xDelta/2, y0 + yDelta/2, Profile.getCurrent(Profile.HANDLE).getPaint());
-				float X = handles.get(i);
-				float Y = handles.get(i+1);
+
+				float X = Float.intBitsToFloat((int)(l>>>32));
+				float Y = Float.intBitsToFloat((int)(l));
 				canvas.translate(X-lastX, Y-lastY);
 				lastX = X;
 				lastY = Y;
-				canvas.drawPath(Profile.getCurrent().x_path, Profile.getCurrent(Profile.HANDLE).getPaint());
+				canvas.drawPath(DataStyle.getCurrent().x_path, DataStyle.getCurrent(DataStyle.HANDLE).getPaint());
+
 			}
-			canvas.restore();	
+			canvas.restore();
+			handles.clear(); // this is hopefully faster than allocating a new set
 		}
-	}
+	}	
 	
-	
-	FeatureProfile getProfile(String tag, OsmElement e) {
+	FeatureStyle getProfile(String tag, OsmElement e) {
 		String mainType = e.getTagWithKey(tag);
-		FeatureProfile fp = null;
+		FeatureStyle fp = null;
 		if (mainType != null) {
-			FeatureProfile tempFp = Profile.getCurrent("way-" + tag);
+			FeatureStyle tempFp = DataStyle.getCurrent("way-" + tag);
 			if (tempFp != null) {
 				fp = tempFp;
 			}
-			tempFp = Profile.getCurrent("way-" + tag + "-" + mainType);
+			tempFp = DataStyle.getCurrent("way-" + tag + "-" + mainType);
 			if (tempFp != null) {
 				fp = tempFp;
 			}
@@ -1050,7 +1146,7 @@ public class Map extends View implements IMapView {
 			canvas.translate(x,y);
 			float angle = (float)(Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI);
 			canvas.rotate(reverse ? angle-180 : angle);
-			canvas.drawPath(Profile.WAY_DIRECTION_PATH, paint);
+			canvas.drawPath(DataStyle.WAY_DIRECTION_PATH, paint);
 			canvas.restore();
 		}
 	}
@@ -1136,29 +1232,29 @@ public class Map extends View implements IMapView {
 	
 	public void setPrefs(final Preferences aPreference) {
 		prefs = aPreference;
-		OpenStreetMapTileServer.setBlacklist(prefs.getServer().getCachedCapabilities().imageryBlacklist);
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if (osmvo instanceof OpenStreetMapTilesOverlay && !(osmvo instanceof OpenStreetMapOverlayTilesOverlay)) {
-				final OpenStreetMapTileServer backgroundTS = OpenStreetMapTileServer.get(Application.mainActivity, prefs.backgroundLayer(), true);
-				((OpenStreetMapTilesOverlay)osmvo).setRendererInfo(backgroundTS);
-			} else if (osmvo instanceof OpenStreetMapOverlayTilesOverlay) {
-				final OpenStreetMapTileServer overlayTS = OpenStreetMapTileServer.get(Application.mainActivity, prefs.overlayLayer(), true);
-				((OpenStreetMapOverlayTilesOverlay)osmvo).setRendererInfo(overlayTS);
+		TileLayerServer.setBlacklist(prefs.getServer().getCachedCapabilities().imageryBlacklist);
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if (osmvo instanceof OpenStreetMapTilesOverlay && !(osmvo instanceof OpenStreetMapOverlayTilesOverlay)) {
+					final TileLayerServer backgroundTS = TileLayerServer.get(Application.mainActivity, prefs.backgroundLayer(), true);
+					((OpenStreetMapTilesOverlay)osmvo).setRendererInfo(backgroundTS);
+				} else if (osmvo instanceof OpenStreetMapOverlayTilesOverlay) {
+					final TileLayerServer overlayTS = TileLayerServer.get(Application.mainActivity, prefs.overlayLayer(), true);
+					((OpenStreetMapOverlayTilesOverlay)osmvo).setRendererInfo(overlayTS);
+				}
 			}
 		}
 		showIcons = prefs.getShowIcons();
 		showWayIcons = prefs.getShowWayIcons();
 		iconcache.clear();
 	}
-	
+
 	public void updateProfile () {
 		// changes when profile changes
-		nodeTolerancePaint = Profile.getCurrent(Profile.NODE_TOLERANCE).getPaint();
-		wayTolerancePaint = Profile.getCurrent(Profile.WAY_TOLERANCE).getPaint();
-		//TODO really only needs to be recalculated on profile change 
-		DisplayMetrics metrics = Application.mainActivity.getResources().getDisplayMetrics();
-//		maxOnScreenNodes = (long) (metrics.widthPixels*metrics.heightPixels/ (nodeTolerancePaint.getStrokeWidth()*nodeTolerancePaint.getStrokeWidth())/3); // one third is based on testing
-//		Log.d("Map","maxOnScreenNodes " + maxOnScreenNodes);
+		nodeTolerancePaint = DataStyle.getCurrent(DataStyle.NODE_TOLERANCE).getPaint();
+		nodeTolerancePaint2 = DataStyle.getCurrent(DataStyle.NODE_TOLERANCE_2).getPaint();
+		wayTolerancePaint = DataStyle.getCurrent(DataStyle.WAY_TOLERANCE).getPaint();
+		wayTolerancePaint2 = DataStyle.getCurrent(DataStyle.WAY_TOLERANCE_2).getPaint();
 	}
 	
 	void setOrientation(final float orientation) {
@@ -1221,7 +1317,7 @@ public class Map extends View implements IMapView {
 	 * @return the tile zoom level
 	 */
 	public int calcZoomLevel(Canvas canvas) {
-		final OpenStreetMapTileServer s = getOpenStreetMapTilesOverlay().getRendererInfo();
+		final TileLayerServer s = getOpenStreetMapTilesOverlay().getRendererInfo();
 		if (!s.isMetadataLoaded()) // protection on startup
 			return 0;
 		
@@ -1268,9 +1364,11 @@ public class Map extends View implements IMapView {
 	 */
 	public ArrayList<String> getImageryNames() {
 		ArrayList<String>result = new ArrayList<String>();
-		for (OpenStreetMapViewOverlay osmvo : mOverlays) {
-			if ((osmvo instanceof OpenStreetMapTilesOverlay)) {
-				result.add(((OpenStreetMapTilesOverlay)osmvo).getRendererInfo().getName());
+		synchronized(mOverlays) {
+			for (OpenStreetMapViewOverlay osmvo : mOverlays) {
+				if ((osmvo instanceof OpenStreetMapTilesOverlay)) {
+					result.add(((OpenStreetMapTilesOverlay)osmvo).getRendererInfo().getName());
+				}
 			}
 		}
 		return result;

@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Preference keys -->
+    <!-- Preference keys used directly by the UI -->
+    <string name="config_autoDownload_key">autoDownload</string>
+    <string name="config_bugAutoDownload_key">bugAutoDownload</string>
+    <string name="config_showGPS_key">showGps</string>
+    <!-- Preference keys used in the pref editor(s) -->
     <string name="config_showStats_key">showStats</string>
     <string name="config_maxStrokeWidth_key">maxStrokeWidth</string>
     <string name="config_tileCacheSize_key">tileCacheSize</string>
@@ -52,6 +56,13 @@
     <string name="config_voiceCommandsEnabled_key">voiceCommandsEnabled</string>
     <string name="config_leaveGpsDisabled_key">leaveGpsDisabled</string>
     <string name="config_showWayIcons_key">showWayIcons</string>
+    <string name="config_tagFormEnabled_key">tagFormEnabled</string>
+    <string name="config_followGPSbutton_key">followGPSbutton</string>
+    <string name="config_fullscreenMode_key">fullscreenMode</string>
+    <string name="config_maxInlineValues_key">maxInlineValues</string>
+    <string name="config_maxTileDownloadThreads_key">maxTileDownloadThreads</string>
+    <string name="config_notificationCacheSize_key">notificationCacheSize</string>
+    <string name="config_autoLockDelay_key">autoLockDelay</string>
     <string-array name="gps_source_keys">
 	<item>internal</item>
 	<item>nmea</item>

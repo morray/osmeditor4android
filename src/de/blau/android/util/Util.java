@@ -5,16 +5,27 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.SortedMap;
 
-import com.actionbarsherlock.app.SherlockActivity;
-
+import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
+import android.graphics.Point;
+import android.graphics.Rect;
+import android.os.Build;
+import android.support.design.widget.FloatingActionButton;
+import android.support.v4.view.ViewCompat;
+import android.support.v4.widget.NestedScrollView;
 import android.util.Log;
-import de.blau.android.Application;
+import android.view.Display;
+import android.view.View;
+import android.widget.ScrollView;
 import de.blau.android.Logic;
-import de.blau.android.Main;
 import de.blau.android.osm.Node;
 import de.blau.android.osm.OsmElement;
 import de.blau.android.osm.StorageDelegator;
@@ -22,8 +33,8 @@ import de.blau.android.osm.Way;
 
 public class Util {
 	
-	static int progressBarShown = 0;
-	
+	private static final String DEBUG_TAG = "Util";
+
 	static public ArrayList<String> getArrayList(String s) {
 		ArrayList<String> v = new ArrayList<String>();
 		v.add(s);
@@ -126,32 +137,6 @@ public class Util {
 	}
 	
 	/**
-	 * Wrapper with a counter so that we keep the progress bar on for as long as necessary
-	 * @param mainActivity
-	 * @param show
-	 */
-	public synchronized static void setSupportProgressBarIndeterminateVisibility(Main mainActivity, boolean show) {
-		if (show) {
-			if (progressBarShown <= 0) {
-				mainActivity.setSupportProgressBarIndeterminateVisibility(true);
-			}
-			progressBarShown++;	
-		} else {
-			progressBarShown--;
-			if (progressBarShown <= 0) {
-				mainActivity.setSupportProgressBarIndeterminateVisibility(false);
-			}
-		}
-	}
-
-	/**
-	 * Reset the progressbar counter to zero
-	 */
-	public synchronized static void resetProgressBarShown() {
-		progressBarShown = 0;
-	}
-
-	/**
 	 * Convert a list to a semicolon separated string
 	 * @param list
 	 * @return string containing the individual list values separated by ; or the empty string if list is null or empty
@@ -167,5 +152,121 @@ public class Util {
 			}
 		}
 		return osmList;
+	}
+    /***
+     * From http://blog.android-develop.com/2014/10/android-l-api-21-javalangillegalargumen.html
+     * 
+     * Android L (lollipop, API 21) introduced a new problem when trying to invoke implicit intent,
+     * "java.lang.IllegalArgumentException: Service Intent must be explicit"
+     *
+     * If you are using an implicit intent, and know only 1 target would answer this intent,
+     * This method will help you turn the implicit intent into the explicit form.
+     *
+     * Inspired from SO answer: http://stackoverflow.com/a/26318757/1446466
+     * @param context
+     * @param implicitIntent - The original implicit intent
+     * @return Explicit Intent created from the implicit original intent
+     */
+    public static Intent createExplicitFromImplicitIntent(Context context, Intent implicitIntent) {
+        // Retrieve all services that can match the given intent
+        PackageManager pm = context.getPackageManager();
+        List<ResolveInfo> resolveInfo = pm.queryIntentServices(implicitIntent, 0);
+
+        // Make sure only one match was found
+        if (resolveInfo == null || resolveInfo.size() != 1) {
+            return null;
+        }
+
+        // Get component info and create ComponentName
+        ResolveInfo serviceInfo = resolveInfo.get(0);
+        String packageName = serviceInfo.serviceInfo.packageName;
+        String className = serviceInfo.serviceInfo.name;
+        ComponentName component = new ComponentName(packageName, className);
+
+        // Create a new intent. Use the old one for extras and such reuse
+        Intent explicitIntent = new Intent(implicitIntent);
+
+        // Set the component to be explicit
+        explicitIntent.setComponent(component);
+
+        return explicitIntent;
+    }
+    
+    @SuppressLint("NewApi")
+	public static boolean isLandscape(Activity activity) {
+		// reliable determine if we are in landscape mode
+		Display display = activity.getWindowManager().getDefaultDisplay();
+		Point size = new Point();
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR2) {
+			display.getSize(size);
+		} else {
+			//noinspection deprecation
+			size.x = display.getWidth();
+			//noinspection deprecation
+			size.y = display.getHeight();
+		}
+
+		return isLarge(activity) && size.x > size.y;
+    }
+    
+    public static boolean isLarge(Activity activity) {
+    	int screenSize = activity.getResources().getConfiguration().screenLayout &
+		        Configuration.SCREENLAYOUT_SIZE_MASK;
+    	return (screenSize == Configuration.SCREENLAYOUT_SIZE_LARGE || screenSize == Configuration.SCREENLAYOUT_SIZE_XLARGE);
+    }
+    
+	/**
+	 * Scroll to the supplied view 
+	 * @param sv the ScrollView or NestedScrollView to scroll
+	 * @param row the row to display, if null scrool to top or bottom of sv
+	 * @param up
+	 * @param force
+	 */
+	public static void scrollToRow(final View sv, final View row,final boolean up, boolean force) {	
+		Rect scrollBounds = new Rect();
+		sv.getHitRect(scrollBounds);
+		Log.d(DEBUG_TAG, "scrollToRow bounds " + scrollBounds);
+		if (row != null && row.getLocalVisibleRect(scrollBounds)&& !force) {
+			return; // already on screen
+		} 
+		if (row==null) {
+			Log.d(DEBUG_TAG, "scrollToRow scrolling to top or bottom");
+			sv.post(new Runnable() {
+				@Override
+				public void run() {
+					if (sv != null && sv instanceof ScrollView) { 
+						((ScrollView)sv).fullScroll(up ? ScrollView.FOCUS_UP : ScrollView.FOCUS_DOWN);
+					} else if (sv != null && sv instanceof NestedScrollView) { 
+						((NestedScrollView)sv).fullScroll(up ? ScrollView.FOCUS_UP : ScrollView.FOCUS_DOWN);
+					} else {
+						Log.e(DEBUG_TAG, "scrollToRow unexpected view " + sv);
+					}
+				}
+			});
+		} else {
+			Log.d(DEBUG_TAG, "scrollToRow scrolling to row");
+			sv.post(new Runnable() {
+				@SuppressLint("NewApi")
+				@Override
+				public void run() {
+					final int target = up ? row.getTop(): row.getBottom();
+					if (sv != null && sv instanceof ScrollView) { 
+						((ScrollView)sv).smoothScrollTo(0, target);
+					} else if (sv != null && sv instanceof NestedScrollView) {
+						((NestedScrollView)sv).smoothScrollTo(0, target);
+					} else {
+						Log.e(DEBUG_TAG, "scrollToRow unexpected view " + sv);
+					}
+				}
+			});
+		}
+	}
+
+	public static void setBackgroundTintList(FloatingActionButton fab, ColorStateList tint) {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+			fab.setBackgroundTintList(tint);
+	    } else {
+	    	ViewCompat.setBackgroundTintList(fab, tint);
+	    }
 	}
 }

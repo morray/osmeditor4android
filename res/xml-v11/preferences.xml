@@ -72,7 +72,7 @@
 			android:title="@string/config_advancedprefs"
 			android:key="@string/config_advancedprefs_key"
 		/>
-		<MultiSelectListPreference
+		<de.blau.android.prefs.MultiSelectListPreference
 			android:key="@string/config_addressTags_key"
 			android:title="@string/config_address_tags"
 			android:summary="@string/config_address_tags_summary"
